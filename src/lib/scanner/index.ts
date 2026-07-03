@@ -1,4 +1,8 @@
 import type { FileEntry } from "../types";
+import { activity } from "./activity";
+import { discoverFiles } from "./discover";
+import { linkEntries } from "./links";
+import { entryModel } from "./model";
 
 /**
  * TODO(codex): full pipeline port of `list_files` from the prototype
@@ -19,5 +23,11 @@ import type { FileEntry } from "../types";
  * Steps 3-5 run only on the capped shortlist.
  */
 export async function listFiles(): Promise<FileEntry[]> {
-  return [];
+  const entries = discoverFiles();
+  for (const entry of entries) {
+    entry.activity = activity(entry.root, entry.path, entry.mtime, entry.size);
+    entry.model = entryModel(entry);
+  }
+  linkEntries(entries);
+  return entries;
 }
