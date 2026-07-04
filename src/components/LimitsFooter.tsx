@@ -26,6 +26,13 @@ function fmtResetAt(resetsAt: number, now: number): string {
   return d.toLocaleDateString("uk", { day: "numeric", month: "short" }) + " " + time;
 }
 
+function fmtStaleSince(staleSince: string | null | undefined): string | null {
+  if (!staleSince) return null;
+  const d = new Date(staleSince);
+  if (Number.isNaN(d.getTime())) return null;
+  return "станом на " + d.toLocaleTimeString("uk", { hour: "2-digit", minute: "2-digit", hour12: false });
+}
+
 /** Bar keeps the engine identity color while there is headroom, then warns. */
 function barColor(leftPercent: number, engineColor: string): string {
   if (leftPercent <= 10) return "#c62828";
@@ -75,22 +82,25 @@ function EngineBlock({
   engine,
   limits,
   now,
+  staleHint,
 }: {
   label: string;
   engine: string;
   limits: EngineLimits | null;
   now: number;
+  staleHint: string | null;
 }) {
   if (!limits || (!limits.session && !limits.weekly)) return null;
   const tint = engineTintOf(engine);
   const stale = limits.capturedAt && now - limits.capturedAt > STALE_S ? fmtAge(limits.capturedAt) : null;
   return (
-    <div className="mt-2.5 first:mt-0">
+    <div className={`mt-2.5 first:mt-0 ${staleHint ? "opacity-60" : ""}`}>
       <div className="flex items-baseline gap-1.5">
         <span className="text-[11.5px] font-bold" style={{ color: tint.color }}>
           {label}
         </span>
         {limits.plan ? <span className="truncate text-[10px] text-dim">{limits.plan}</span> : null}
+        {staleHint ? <span className="truncate text-[10px] text-dim">{staleHint}</span> : null}
         {stale ? (
           <span
             className="h-1.5 w-1.5 shrink-0 self-center rounded-full bg-[#d29a2f]"
@@ -104,6 +114,21 @@ function EngineBlock({
   );
 }
 
+function isEmptyPayload(data: LimitsPayload): boolean {
+  return !data.claude && !data.codex;
+}
+
+function stickyPayload(previous: LimitsPayload | null, next: LimitsPayload): LimitsPayload {
+  if (isEmptyPayload(next) && previous) {
+    return { ...previous, staleSince: next.staleSince ?? previous.staleSince ?? null };
+  }
+  return {
+    claude: next.claude ?? previous?.claude ?? null,
+    codex: next.codex ?? previous?.codex ?? null,
+    staleSince: next.staleSince ?? null,
+  };
+}
+
 /** Sidebar footer: Claude Code and Codex plan limits (5h session + weekly). */
 export function LimitsFooter() {
   const [snap, setSnap] = useState<{ data: LimitsPayload; at: number } | null>(null);
@@ -115,7 +140,9 @@ export function LimitsFooter() {
         const res = await fetch("/api/limits");
         if (!res.ok) return;
         const json = (await res.json()) as LimitsPayload;
-        if (alive) setSnap({ data: json, at: Date.now() / 1000 });
+        if (alive) {
+          setSnap((prev) => ({ data: stickyPayload(prev?.data ?? null, json), at: Date.now() / 1000 }));
+        }
       } catch {
         /* keep previous numbers */
       }
@@ -129,10 +156,11 @@ export function LimitsFooter() {
   }, []);
 
   if (!snap || (!snap.data.claude && !snap.data.codex)) return null;
+  const staleHint = fmtStaleSince(snap.data.staleSince);
   return (
     <div className="shrink-0 border-t border-line px-3.5 pb-3 pt-2.5">
-      <EngineBlock label="Claude" engine="claude" limits={snap.data.claude} now={snap.at} />
-      <EngineBlock label="Codex" engine="codex" limits={snap.data.codex} now={snap.at} />
+      <EngineBlock label="Claude" engine="claude" limits={snap.data.claude} now={snap.at} staleHint={staleHint} />
+      <EngineBlock label="Codex" engine="codex" limits={snap.data.codex} now={snap.at} staleHint={staleHint} />
     </div>
   );
 }

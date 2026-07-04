@@ -162,4 +162,6 @@ export interface EngineLimits {
 export interface LimitsPayload {
   claude: EngineLimits | null;
   codex: EngineLimits | null;
+  /** ISO timestamp from the first failed refresh behind this fallback payload. */
+  staleSince?: string | null;
 }

@@ -6,6 +6,7 @@ import type { EngineLimits, LimitsPayload, LimitWindow } from "./types";
 
 const HOME = os.homedir();
 const CLAUDE_CREDENTIALS = path.join(HOME, ".claude", ".credentials.json");
+const LIMITS_CACHE_FILE = path.join(HOME, ".claude", "viewer-state", "limits-cache.json");
 const CODEX_SESSIONS = path.join(HOME, ".codex", "sessions");
 const OAUTH_USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 
@@ -15,15 +16,87 @@ const TAIL_BYTES = 192 * 1024;
 const MAX_FILES = 12;
 const CACHE_MS = 30_000;
 
-let cache: { at: number; data: LimitsPayload } | null = null;
+type LimitsCacheEntry = { at: number; data: LimitsPayload };
+type LimitRead = { data: EngineLimits | null; reason: string | null };
+
+const globalStore = globalThis as unknown as {
+  __llvLimitsCache?: LimitsCacheEntry | null;
+};
+
+function hasLimits(data: LimitsPayload): boolean {
+  return Boolean(data.claude || data.codex);
+}
+
+function cleanPayload(data: LimitsPayload): LimitsPayload {
+  return { claude: data.claude, codex: data.codex, staleSince: data.staleSince ?? null };
+}
+
+function readDiskCache(): LimitsCacheEntry | null {
+  try {
+    const raw = JSON.parse(fs.readFileSync(LIMITS_CACHE_FILE, "utf8")) as Partial<LimitsCacheEntry>;
+    if (!raw || typeof raw.at !== "number" || !raw.data) return null;
+    const data = cleanPayload(raw.data);
+    if (!hasLimits(data)) return null;
+    return { at: raw.at, data };
+  } catch {
+    return null;
+  }
+}
+
+function writeDiskCache(entry: LimitsCacheEntry): void {
+  try {
+    fs.mkdirSync(path.dirname(LIMITS_CACHE_FILE), { recursive: true });
+    fs.writeFileSync(LIMITS_CACHE_FILE, JSON.stringify(entry, null, 2) + "\n", "utf8");
+  } catch (err) {
+    console.warn("[limits] failed to persist cache", err);
+  }
+}
+
+function lastCache(): LimitsCacheEntry | null {
+  if (globalStore.__llvLimitsCache) return globalStore.__llvLimitsCache;
+  globalStore.__llvLimitsCache = readDiskCache();
+  return globalStore.__llvLimitsCache ?? null;
+}
+
+function remember(data: LimitsPayload): LimitsPayload {
+  const entry = { at: Date.now(), data: cleanPayload(data) };
+  globalStore.__llvLimitsCache = entry;
+  writeDiskCache({ ...entry, data: cleanPayload({ ...data, staleSince: null }) });
+  return entry.data;
+}
+
+function fallbackFromCache(cache: LimitsCacheEntry | null, staleSince: string): LimitsPayload {
+  if (!cache) return { claude: null, codex: null, staleSince };
+  return { ...cache.data, staleSince };
+}
+
+function logRefreshMiss(claude: LimitRead, codex: LimitRead, cached: boolean): void {
+  const reasons = [`claude=${claude.reason ?? "ok"}`, `codex=${codex.reason ?? "ok"}`].join(" ");
+  console.warn(`[limits] refresh returned no fresh values; ${reasons}; cached=${cached ? "yes" : "no"}`);
+}
+
+function logPartialFallback(claude: LimitRead, codex: LimitRead): void {
+  const reasons = [`claude=${claude.reason ?? "ok"}`, `codex=${codex.reason ?? "ok"}`].join(" ");
+  console.warn(`[limits] refresh used cached value for one engine; ${reasons}`);
+}
 
 /** Claude Code + Codex plan limits, cached briefly so UI polling stays cheap. */
 export async function readLimits(): Promise<LimitsPayload> {
-  if (cache && Date.now() - cache.at < CACHE_MS) return cache.data;
+  const cached = lastCache();
+  if (cached && Date.now() - cached.at < CACHE_MS) return cached.data;
+  const staleSince = new Date().toISOString();
   const [claude, codex] = await Promise.all([fetchClaudeLimits(), Promise.resolve(readCodexLimits())]);
-  const data: LimitsPayload = { claude, codex };
-  cache = { at: Date.now(), data };
-  return data;
+  const data: LimitsPayload = {
+    claude: claude.data ?? cached?.data.claude ?? null,
+    codex: codex.data ?? cached?.data.codex ?? null,
+    staleSince: claude.data && codex.data ? null : staleSince,
+  };
+  if (hasLimits(data)) {
+    if (!claude.data || !codex.data) logPartialFallback(claude, codex);
+    return remember(data);
+  }
+  logRefreshMiss(claude, codex, Boolean(cached));
+  return fallbackFromCache(cached, staleSince);
 }
 
 /* ------------------------------- Claude ------------------------------- */
@@ -38,7 +111,7 @@ interface OauthWindow {
  * from ~/.claude/.credentials.json stays inside the server process; the
  * browser only ever sees percentages.
  */
-async function fetchClaudeLimits(): Promise<EngineLimits | null> {
+async function fetchClaudeLimits(): Promise<LimitRead> {
   let accessToken = "";
   let plan: string | null = null;
   try {
@@ -47,10 +120,10 @@ async function fetchClaudeLimits(): Promise<EngineLimits | null> {
     };
     if (typeof raw.claudeAiOauth?.accessToken === "string") accessToken = raw.claudeAiOauth.accessToken;
     if (typeof raw.claudeAiOauth?.subscriptionType === "string") plan = raw.claudeAiOauth.subscriptionType;
-  } catch {
-    return null;
+  } catch (err) {
+    return { data: null, reason: `credentials unreadable: ${err instanceof Error ? err.message : String(err)}` };
   }
-  if (!accessToken) return null;
+  if (!accessToken) return { data: null, reason: "credentials missing access token" };
   try {
     const res = await fetch(OAUTH_USAGE_URL, {
       headers: {
@@ -59,16 +132,18 @@ async function fetchClaudeLimits(): Promise<EngineLimits | null> {
       },
       signal: AbortSignal.timeout(8000),
     });
-    if (!res.ok) return null;
+    if (!res.ok) return { data: null, reason: `oauth usage status ${res.status}` };
     const json = (await res.json()) as { five_hour?: OauthWindow; seven_day?: OauthWindow };
-    return {
+    const data = {
       session: oauthWindow(json.five_hour),
       weekly: oauthWindow(json.seven_day),
       plan,
       capturedAt: null,
     };
-  } catch {
-    return null;
+    if (!data.session && !data.weekly) return { data: null, reason: "oauth usage response had no windows" };
+    return { data, reason: null };
+  } catch (err) {
+    return { data: null, reason: `oauth usage fetch failed: ${err instanceof Error ? err.message : String(err)}` };
   }
 }
 
@@ -98,12 +173,14 @@ interface CodexRateLimits {
  * session transcript. The last such event in the newest transcript is the
  * freshest number available offline.
  */
-function readCodexLimits(): EngineLimits | null {
+function readCodexLimits(): LimitRead {
+  let scanned = 0;
   for (const file of latestSessionFiles()) {
+    scanned += 1;
     const hit = lastRateLimits(file);
-    if (hit) return hit;
+    if (hit) return { data: hit, reason: null };
   }
-  return null;
+  return { data: null, reason: scanned === 0 ? "no codex session files" : `no rate_limits event in newest ${scanned} session files` };
 }
 
 function listDesc(dir: string): string[] {
