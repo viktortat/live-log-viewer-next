@@ -137,13 +137,16 @@ export async function knownLivePids(): Promise<Set<number>> {
 /**
  * Pushes `text` into the pane, then presses Enter. A dedicated tmux buffer plus
  * paste-buffer carries multi-line payloads reliably where send-keys would not.
+ * `-p` wraps the paste in bracketed-paste markers when the pane's application
+ * enabled them (both agent CLIs do): without the markers raw \n bytes hit the
+ * TUI as keystrokes and line breaks collapse or vanish inside the message.
  */
 export async function sendText(target: TmuxTarget, text: string): Promise<void> {
   const bufferName = `viewer-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
   const load = await runTmux(["load-buffer", "-b", bufferName, "-"], Buffer.from(text, "utf8"));
   if (load.code !== 0) throw new Error(load.stderr.trim() || "не вдалося завантажити буфер tmux");
 
-  const paste = await runTmux(["paste-buffer", "-d", "-b", bufferName, "-t", target]);
+  const paste = await runTmux(["paste-buffer", "-d", "-p", "-b", bufferName, "-t", target]);
   if (paste.code !== 0) throw new Error(paste.stderr.trim() || "не вдалося вставити текст у пейн");
 
   const enter = await runTmux(["send-keys", "-t", target, "Enter"]);
