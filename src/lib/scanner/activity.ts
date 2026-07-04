@@ -66,27 +66,36 @@ function jsonlTurnState(pathname: string, size: number, codex: boolean) {
   return null;
 }
 
-export function activity(
+/** Activity plus the machine-readable reason behind the judgement — surfaced
+    in tooltips and the event log so a wrong idle/busy call is diagnosable
+    instead of a mystery (the classic failure of pane-scraping orchestrators). */
+export interface ActivityVerdict {
+  state: Activity;
+  reason: string;
+}
+
+export function activityVerdict(
   root: RootKey,
   pathname: string,
   mtime: number,
   size: number,
   job: Record<string, unknown> | null = null,
-): Activity {
+): ActivityVerdict {
   const age = Date.now() / 1000 - mtime;
   if (root === "codex-jobs") {
     const jobJson = job ?? readJson(pathname.replace(/\.log$/, ".json"));
     if (jobJson) {
       if (jobJson.status === "running") {
         const pid = numberValue(jobJson.pid);
-        return pid !== null && pidAlive(pid) ? "live" : age < 900 ? "recent" : "idle";
+        if (pid !== null && pidAlive(pid)) return { state: "live", reason: "job_pid_alive" };
+        return { state: age < 900 ? "recent" : "idle", reason: "job_pid_dead" };
       }
-      return age < 900 ? "recent" : "idle";
+      return { state: age < 900 ? "recent" : "idle", reason: "job_finished" };
     }
   }
   if (root === "claude-tasks" && pathname.endsWith(".output")) {
-    if (outputHolders().has(pathname)) return "live";
-    return age < 900 ? "recent" : "idle";
+    if (outputHolders().has(pathname)) return { state: "live", reason: "output_held" };
+    return { state: age < 900 ? "recent" : "idle", reason: "output_released" };
   }
   if (pathname.endsWith(".jsonl")) {
     const cached = turnCache.get(pathname);
@@ -96,10 +105,24 @@ export function activity(
       state = jsonlTurnState(pathname, size, root.startsWith("codex"));
       turnCache.set(pathname, [size, state]);
     }
-    if (state === "busy") return age < 180 ? "live" : "stalled";
-    if (state === "done") return age < 900 ? "recent" : "idle";
+    if (state === "busy") {
+      return age < 180 ? { state: "live", reason: "jsonl_turn_open" } : { state: "stalled", reason: "jsonl_turn_stalled" };
+    }
+    if (state === "done") {
+      return { state: age < 900 ? "recent" : "idle", reason: "jsonl_turn_completed" };
+    }
   }
-  if (age < 20) return "live";
-  if (age < 900) return "recent";
-  return "idle";
+  if (age < 20) return { state: "live", reason: "mtime_fresh" };
+  if (age < 900) return { state: "recent", reason: "mtime_recent" };
+  return { state: "idle", reason: "mtime_old" };
+}
+
+export function activity(
+  root: RootKey,
+  pathname: string,
+  mtime: number,
+  size: number,
+  job: Record<string, unknown> | null = null,
+): Activity {
+  return activityVerdict(root, pathname, mtime, size, job).state;
 }

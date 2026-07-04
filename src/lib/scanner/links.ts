@@ -2,6 +2,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import {
+  handoffParentForChild,
+  handoffParentForPid,
+  persistHandoffLineage,
+  rememberHandoffChild,
+} from "../handoffLineage";
 import type { FileEntry } from "../types";
 import { globalCache } from "./caches";
 import { taskParts } from "./discover";
@@ -324,6 +330,39 @@ function attachLiveCodexParents(entries: FileEntry[]): void {
   persistLineage();
 }
 
+/**
+ * Links a conversation born from a handoff to its source. The spawn recorded
+ * «pane pid → source transcript»; a still-orphan conversation whose /proc
+ * ancestry reaches that pane pid is the agent booted in it. The proven link
+ * persists by path, so it holds after the process (and the pane) are gone.
+ * The `handoff` flag makes the UI treat the child as a branch of its source
+ * rather than a compaction predecessor.
+ */
+function attachHandoffParents(entries: FileEntry[]): void {
+  const byPath = new Map(entries.map((entry) => [entry.path, entry]));
+  for (const entry of entries) {
+    if (entry.parent) continue;
+    if (entry.root !== "claude-projects" && entry.root !== "codex-sessions") continue;
+    if (!entry.path.endsWith(".jsonl") || entry.path.includes(path.sep + "subagents" + path.sep)) continue;
+    let parent = handoffParentForChild(entry.path);
+    if (!parent && entry.pid !== null) {
+      const seen = new Set<number>();
+      for (let pid: number | null = entry.pid; pid !== null && !seen.has(pid); pid = readPpid(pid)) {
+        seen.add(pid);
+        if (seen.size > ANCESTRY_MAX_DEPTH) break;
+        parent = handoffParentForPid(pid);
+        if (parent) break;
+      }
+      if (parent && parent !== entry.path) rememberHandoffChild(entry.path, parent);
+    }
+    if (parent && parent !== entry.path && byPath.has(parent)) {
+      entry.parent = parent;
+      entry.handoff = true;
+    }
+  }
+  persistHandoffLineage();
+}
+
 export function linkEntries(entries: FileEntry[]): void {
   const byPath = new Map(entries.map((entry) => [entry.path, entry]));
   const threadMap = new Map<string, string>();
@@ -391,6 +430,7 @@ export function linkEntries(entries: FileEntry[]): void {
     }
   }
   attachLiveCodexParents(entries);
+  attachHandoffParents(entries);
   chainCompactedSessions(entries);
   const rootProject = (entry: FileEntry): string => {
     const seen = new Set<string>();

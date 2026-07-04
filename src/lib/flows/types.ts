@@ -1,0 +1,115 @@
+// Shared contract for review-loop flows (docs/review-loop-ui.md).
+// This file is the seam between the server engine (src/lib/flows/*) and the
+// UI (src/components/*). Extend it only when the spec changes.
+
+export type FlowEngine = "claude" | "codex";
+
+export type RoleConfig = {
+  engine: FlowEngine;
+  model: string | null; // null = engine default
+  effort: string | null; // null = engine default; codex: low|medium|high|xhigh
+};
+
+export type FlowRoleKey = "implementer" | "reviewer";
+
+export type FlowTemplateId = "implement-review-loop";
+
+export type FlowState =
+  | "waiting_ready"
+  | "spawn_pending"
+  | "spawning"
+  | "reviewing"
+  | "relay_pending"
+  | "relaying"
+  | "fixing"
+  | "approved"
+  | "done_comment"
+  | "needs_decision"
+  | "paused"
+  | "closed";
+
+export type ReviewVerdict = "APPROVE" | "REQUEST_CHANGES" | "COMMENT";
+
+export type Round = {
+  n: number; // 1-based
+  reviewerPath: string | null; // reviewer run's transcript path once known
+  findingsPath: string | null; // round artifact file once written
+  triggeredBy: "marker" | "button";
+  readyNote: string | null; // text after REVIEW_READY:
+  verdict: ReviewVerdict | null;
+  findingsCount: number | null;
+  startedAt: string;
+  spawnStartedAt?: string | null; // reviewer launch started
+  relayStartedAt?: string | null; // findings delivery started
+  reviewedAt: string | null; // verdict detected
+  relayedAt: string | null; // findings delivered to implementer
+  error: string | null;
+};
+
+export type Flow = {
+  id: string;
+  template: FlowTemplateId;
+  project: string; // FileEntry.project of the implementer
+  cwd: string; // implementer's working directory
+  implementerPath: string; // transcript path of the attached session
+  roles: Record<FlowRoleKey, RoleConfig>;
+  baseRef: string; // resolved git SHA captured at creation
+  baseMode: "head" | "merge-base";
+  mode: "auto" | "manual";
+  reviewerMode: "headless" | "pane";
+  roundLimit: number; // default 5
+  state: FlowState;
+  pausedState?: FlowState | null;
+  /** Human-readable reason shown on the strip for needs_decision/paused. */
+  stateDetail: string | null;
+  rounds: Round[];
+  createdAt: string;
+  closedAt: string | null;
+};
+
+export type FlowPreset = {
+  name: string;
+  implementer: RoleConfig;
+  reviewer: RoleConfig;
+};
+
+export type CreateFlowRequest = {
+  implementerPath: string;
+  preset?: string; // preset name; mutually exclusive with roles
+  roles?: Record<FlowRoleKey, RoleConfig>;
+  baseMode: "head" | "merge-base";
+  mode: "auto" | "manual";
+  reviewerMode: "headless" | "pane";
+  roundLimit: number;
+};
+
+export type FlowAction =
+  | "pause"
+  | "resume"
+  | "set-mode"
+  | "advance"
+  | "retry-round"
+  | "extend"
+  | "another-round"
+  | "close";
+
+export type PatchFlowRequest = {
+  action: FlowAction;
+  /** for set-mode */
+  mode?: "auto" | "manual";
+  /** for extend: how many rounds to add (default 1) */
+  rounds?: number;
+};
+
+/** Per-transcript annotation piggybacked on /api/files entries. */
+export type FlowAnnotation = {
+  flowId: string;
+  flowRole: FlowRoleKey;
+  /** round number for reviewer transcripts, null for the implementer */
+  round: number | null;
+};
+
+export type FlowsResponse = {
+  flows: Flow[];
+  presets: FlowPreset[];
+};

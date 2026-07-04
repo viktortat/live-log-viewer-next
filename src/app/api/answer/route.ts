@@ -5,7 +5,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { rejectCrossOrigin } from "@/lib/sameOrigin";
 import { listFiles } from "@/lib/scanner";
 import { pendingQuestionFor, recordedToolResult } from "@/lib/scanner/questions";
-import { paneScreen, READY_MARKERS, resolveTarget, screenTail, sendKeys, sendText } from "@/lib/tmux";
+import { READY_MARKERS } from "@/lib/status";
+import { paneScreen, resolveTarget, screenTail, sendKeys, sendText } from "@/lib/tmux";
 import type { ApiError, FileEntry, PendingQuestion, PendingQuestionItem } from "@/lib/types";
 
 export const runtime = "nodejs";

@@ -1,4 +1,5 @@
-import { paneScreen, resolveTarget, screenTail, WAITING_INPUT_PROMPTS } from "@/lib/tmux";
+import { screenWaitsForInput } from "@/lib/status";
+import { paneScreen, resolveTarget, screenTail } from "@/lib/tmux";
 
 import type { FileEntry, WaitingInput } from "../types";
 
@@ -15,8 +16,7 @@ interface ProbeState {
 const probes = new Map<string, ProbeState>();
 
 function looksPromptLike(screen: string): boolean {
-  const tail = screen.split("\n").slice(-12).join("\n");
-  return WAITING_INPUT_PROMPTS.some((pattern) => pattern.test(tail));
+  return screenWaitsForInput(screen);
 }
 
 export async function waitingInputFor(entry: FileEntry): Promise<WaitingInput | null> {

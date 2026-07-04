@@ -1,3 +1,5 @@
+import type { Flow, FlowAnnotation } from "@/lib/flows/types";
+
 export type RootKey =
   | "codex-jobs"
   | "codex-sessions"
@@ -25,19 +27,62 @@ export interface FileEntry {
   mtime: number;
   size: number;
   activity: Activity;
+  /** Machine-readable reason behind `activity` (jsonl_turn_open, mtime_fresh…). */
+  activityReason?: string;
   /** Real OS process state when the entry maps to a process, else null. */
   proc: "running" | "done" | "killed" | null;
   pid: number | null;
+  /** Set when this conversation was spawned by a handoff from `parent`. */
+  handoff?: boolean;
   /** Short model name (fable-5, gpt-5.5, sonnet…) or null when unknown. */
   model: string | null;
   /** Structured Claude prompt that is currently blocking the live agent. */
   pendingQuestion: PendingQuestion | null;
+  /** Newest TodoWrite/update_plan state — the agent's plan and current goal. */
+  plan?: AgentPlan | null;
+  /** Codex only: the thread's declared goal (objective + status). */
+  goal?: AgentGoal | null;
   /** Best-effort TUI scrape fallback for prompts without a transcript protocol. */
   waitingInput: WaitingInput | null;
   /** claude-tasks only: recovered originating Bash command ("" if not found). */
   cmd?: string;
   /** claude-tasks only: the Bash tool `description` field. */
   cmdDesc?: string;
+  /** Review-loop ownership for grouping implementer/reviewer sessions. */
+  flow?: FlowAnnotation;
+}
+
+export interface FilesResponse {
+  files: FileEntry[];
+  flows: Flow[];
+}
+
+export type PlanStepStatus = "pending" | "in_progress" | "completed";
+
+/** Codex thread goal (update_goal tool / thread_goal_updated events): the
+    session-level objective and its lifecycle. Claude has no counterpart. */
+export interface AgentGoal {
+  objective: string | null;
+  status: "active" | "complete" | "blocked";
+  tokensUsed: number | null;
+  timeUsedSeconds: number | null;
+}
+
+export interface PlanStep {
+  text: string;
+  status: PlanStepStatus;
+}
+
+/** Latest self-reported working plan of an agent: Claude's TodoWrite todos or
+    Codex's update_plan steps, whichever the transcript tail carries. */
+export interface AgentPlan {
+  steps: PlanStep[];
+  done: number;
+  total: number;
+  /** The step being worked on right now — the agent's current goal. */
+  current: string | null;
+  /** ISO timestamp of the plan update record, when the transcript had one. */
+  updatedAt: string | null;
 }
 
 export interface PendingQuestionOption {

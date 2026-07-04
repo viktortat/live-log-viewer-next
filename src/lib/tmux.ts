@@ -4,14 +4,24 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { logEvent } from "@/lib/events";
 import { inboxImageExt, MAX_INBOX_IMAGE_BYTES } from "@/lib/imagePolicy";
+import { INBOX_DIR } from "@/lib/inbox";
 import { listFiles } from "@/lib/scanner";
 import { isHelperArgv, pidAlive, readArgv, readPpid } from "@/lib/scanner/process";
+import {
+  composerLine,
+  detectBlockingGate,
+  detectStartupGate,
+  isShellCommand,
+  READY_MARKERS,
+} from "@/lib/status";
+
+export { READY_MARKERS } from "@/lib/status";
 
 const TMUX = "tmux";
 const PANE_MAP_TTL_MS = 5_000;
 const MAX_ANCESTRY_HOPS = 64;
-const INBOX_DIR = path.join(os.homedir(), ".claude", "viewer-inbox");
 
 export interface InboxImagePayload {
   base64: string;
@@ -152,14 +162,100 @@ export async function knownLivePids(): Promise<Set<number>> {
   return pids;
 }
 
+const PASTE_SETTLE_MS = 250;
+const SUBMIT_VERIFY_TRIES = 4;
+const SUBMIT_VERIFY_DELAY_MS = 400;
+const GATE_SETTLE_MS = 700;
+
+/**
+ * Per-pane send serialization. Two concurrent deliveries into one pane
+ * interleave their paste/Enter sequences and corrupt both messages — a real
+ * failure mode every upstream tmux orchestrator guards against. The chain
+ * keyed by target runs deliveries strictly one after another; an earlier
+ * failure never blocks the next sender.
+ */
+const paneLocks = new Map<string, Promise<unknown>>();
+
+export async function withPaneLock<T>(target: string, fn: () => Promise<T>): Promise<T> {
+  const prev = paneLocks.get(target) ?? Promise.resolve();
+  const run = prev.then(fn, fn);
+  paneLocks.set(
+    target,
+    run.catch(() => undefined),
+  );
+  try {
+    return await run;
+  } finally {
+    if (paneLocks.get(target) !== run && paneLocks.size > 256) paneLocks.clear();
+  }
+}
+
+/**
+ * Pre-send pane check: the message must land in an agent CLI's composer.
+ * A pane whose foreground process fell back to the shell would execute the
+ * text as shell commands; auto-answerable startup gates (trust folder, resume
+ * picker) get an Enter and one settle round; approval/rate-limit walls refuse
+ * the send with a readable reason — a blind paste there vanishes or, worse,
+ * answers a question the user never saw.
+ */
+async function ensureDeliverable(target: TmuxTarget): Promise<void> {
+  const command = await paneCommand(target);
+  if (command === null) throw new Error("tmux-пейн недоступний");
+  if (isShellCommand(command)) {
+    logEvent("gate", { target, result: "error", reason: "shell_prompt" });
+    throw new Error("у пейні немає агента (звичайний shell) — повідомлення не надіслано");
+  }
+  for (let round = 0; round < 3; round += 1) {
+    const screen = await paneScreen(target);
+    const startup = detectStartupGate(screen);
+    if (startup !== null) {
+      logEvent("gate", { target, result: "ok", reason: startup });
+      await runTmux(["send-keys", "-t", target, "Enter"]);
+      await sleep(GATE_SETTLE_MS);
+      continue;
+    }
+    const blocking = detectBlockingGate(screen);
+    if (blocking !== null) {
+      logEvent("gate", { target, result: "error", reason: blocking });
+      throw new Error(
+        blocking === "rate_limit"
+          ? "агент уперся в rate limit — повідомлення не надіслано"
+          : "агент чекає на підтвердження в пейні — дай відповідь перед новим повідомленням",
+      );
+    }
+    return;
+  }
+}
+
 /**
  * Pushes `text` into the pane, then presses Enter. A dedicated tmux buffer plus
  * paste-buffer carries multi-line payloads reliably where send-keys would not.
  * `-p` wraps the paste in bracketed-paste markers when the pane's application
  * enabled them (both agent CLIs do): without the markers raw \n bytes hit the
  * TUI as keystrokes and line breaks collapse or vanish inside the message.
+ *
+ * The TUI ingests a bracketed paste asynchronously, so an Enter that lands
+ * mid-ingest gets swallowed and the message sits in the composer unsent. The
+ * paste therefore gets a settle delay, and afterwards the composer is polled:
+ * while it still shows the head of the text (or a collapsed «[Pasted text …]»
+ * chip), Enter is pressed again. An extra Enter on an already-empty composer
+ * is a no-op in both CLIs, so a false positive here costs nothing.
  */
 export async function sendText(target: TmuxTarget, text: string): Promise<void> {
+  await withPaneLock(target, async () => {
+    try {
+      await ensureDeliverable(target);
+      await sendTextUnlocked(target, text);
+      logEvent("send", { target, result: "ok", meta: { bytes: text.length } });
+    } catch (error) {
+      logEvent("send", { target, result: "error", reason: error instanceof Error ? error.message : String(error) });
+      throw error;
+    }
+  });
+}
+
+/** The raw paste+Enter sequence; callers must hold the pane lock. */
+async function sendTextUnlocked(target: TmuxTarget, text: string): Promise<void> {
   const bufferName = `viewer-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
   const load = await runTmux(["load-buffer", "-b", bufferName, "-"], Buffer.from(text, "utf8"));
   if (load.code !== 0) throw new Error(load.stderr.trim() || "не вдалося завантажити буфер tmux");
@@ -167,8 +263,18 @@ export async function sendText(target: TmuxTarget, text: string): Promise<void> 
   const paste = await runTmux(["paste-buffer", "-d", "-p", "-b", bufferName, "-t", target]);
   if (paste.code !== 0) throw new Error(paste.stderr.trim() || "не вдалося вставити текст у пейн");
 
+  await sleep(PASTE_SETTLE_MS);
   const enter = await runTmux(["send-keys", "-t", target, "Enter"]);
   if (enter.code !== 0) throw new Error(enter.stderr.trim() || "не вдалося натиснути Enter");
+
+  const head = text.split("\n").map((line) => line.trim()).find(Boolean)?.slice(0, 32) ?? "";
+  for (let round = 0; round < SUBMIT_VERIFY_TRIES; round += 1) {
+    await sleep(SUBMIT_VERIFY_DELAY_MS);
+    const line = composerLine(await paneScreen(target));
+    const stillUnsent = (head !== "" && line.includes(head)) || line.includes("[Pasted text");
+    if (!stillUnsent) return;
+    await runTmux(["send-keys", "-t", target, "Enter"]);
+  }
 }
 
 /**
@@ -177,7 +283,18 @@ export async function sendText(target: TmuxTarget, text: string): Promise<void> 
  */
 export async function sendInterrupt(target: TmuxTarget): Promise<void> {
   const res = await runTmux(["send-keys", "-t", target, "Escape"]);
+  logEvent("interrupt", { target, result: res.code === 0 ? "ok" : "error", reason: res.stderr.trim() || undefined });
   if (res.code !== 0) throw new Error(res.stderr.trim() || "не вдалося надіслати Escape");
+}
+
+/**
+ * Kills the tmux pane hosting a conversation's agent. The window goes with it
+ * when this was its only pane — the case for every window the viewer spawns.
+ */
+export async function killPane(target: TmuxTarget): Promise<void> {
+  const res = await runTmux(["kill-pane", "-t", target]);
+  logEvent("kill", { target, result: res.code === 0 ? "ok" : "error", reason: res.stderr.trim() || undefined });
+  if (res.code !== 0) throw new Error(res.stderr.trim() || "не вдалося закрити tmux-пейн");
 }
 
 /**
@@ -207,7 +324,10 @@ export async function activeTmuxSession(): Promise<string> {
     const name = pick(sessions.stdout);
     if (name) return name;
   }
-  const created = await runTmux(["new-session", "-d", "-s", "agents"]);
+  /* A detached session created without a size falls back to 80x24 and
+     reflows every agent TUI into an unreadable strip; a generous fixed size
+     keeps captures and screen-scrape detection stable until a client attaches. */
+  const created = await runTmux(["new-session", "-d", "-x", "220", "-y", "50", "-s", "agents"]);
   if (created.code !== 0 && !/duplicate session/.test(created.stderr)) {
     throw new Error(created.stderr.trim() || "не вдалося створити tmux-сесію");
   }
@@ -264,6 +384,9 @@ export interface ResumeSpec {
   command: string;
   cwd: string;
   windowName: string;
+  /** Transcript path the session will write, when knowable at spawn time —
+      a fresh claude session launched with a pre-chosen --session-id. */
+  transcript?: string;
 }
 
 /**
@@ -296,16 +419,39 @@ export function resumeSpecFor(root: string, pathname: string): ResumeSpec | null
 
 export type AgentEngine = "claude" | "codex";
 
+export interface FreshSpecOptions {
+  model?: string | null;
+  effort?: string | null;
+  readOnly?: boolean;
+}
+
+function shellQuote(value: string): string {
+  return "'" + value.replace(/'/g, "'\\''") + "'";
+}
+
 /** Boot spec for a brand-new agent (no prior conversation) in a chosen directory. */
-export function freshSpecFor(engine: AgentEngine, cwd: string): ResumeSpec {
+export function freshSpecFor(engine: AgentEngine, cwd: string, options: FreshSpecOptions = {}): ResumeSpec {
   if (engine === "claude") {
+    /* A pre-chosen session id makes the transcript path knowable right at
+       spawn time (handoff lineage links it before the file exists) and lets
+       the scanner pid-match the session by argv, where the cwd fallback would
+       stay ambiguous with several agents in one directory. */
+    const sid = crypto.randomUUID();
+    const args = [resolveBinary("claude"), "--dangerously-skip-permissions", "--session-id", sid];
+    if (options.model) args.push("--model", options.model);
+    if (options.readOnly) args.push("--disallowedTools", "Edit,Write,NotebookEdit");
     return {
-      command: `${resolveBinary("claude")} --dangerously-skip-permissions`,
+      command: args.map(shellQuote).join(" "),
       cwd,
       windowName: "claude-new",
+      transcript: path.join(os.homedir(), ".claude", "projects", cwd.replace(/[^A-Za-z0-9]/g, "-"), sid + ".jsonl"),
     };
   }
-  return { command: resolveBinary("codex"), cwd, windowName: "codex-new" };
+  const args = [resolveBinary("codex")];
+  if (options.model) args.push("-m", options.model);
+  if (options.effort) args.push("-c", `model_reasoning_effort=${options.effort}`);
+  if (options.readOnly) args.push("--sandbox", "read-only");
+  return { command: args.map(shellQuote).join(" "), cwd, windowName: "codex-new" };
 }
 
 /**
@@ -355,6 +501,9 @@ export interface SpawnedPane {
   paneId: string;
   /** Human-readable `session:window.pane` shown in the UI. */
   display: TmuxTarget;
+  /** Shell pid of the pane, set on freshly spawned windows: handoff lineage
+      matches a later-born conversation to its source through this pid. */
+  panePid?: number;
 }
 
 /**
@@ -374,12 +523,17 @@ export async function liveResumePane(transcriptPath: string): Promise<SpawnedPan
     "#{window_name}\t#{pane_current_command}\t#{session_name}:#{window_index}.#{pane_index}",
   ]).catch(() => null);
   const parts = res && res.code === 0 ? res.stdout.trim().split("\t") : null;
-  if (!parts || parts.length !== 3 || parts[0] !== record.windowName || SHELL_COMMANDS.has(parts[1] ?? "")) {
+  if (!parts || parts.length !== 3 || parts[0] !== record.windowName || isShellCommand(parts[1] ?? "")) {
     loadResumePanes().delete(transcriptPath);
     persistResumePanes();
     return null;
   }
   return { paneId: record.paneId, display: parts[2] ?? record.paneId };
+}
+
+/** Drops a transcript's resume-window record, e.g. after its pane was killed. */
+export function forgetResumePane(transcriptPath: string): void {
+  if (loadResumePanes().delete(transcriptPath)) persistResumePanes();
 }
 
 const resumeInFlight = new Map<string, Promise<SpawnedPane>>();
@@ -411,7 +565,16 @@ export async function sendToResumedAgent(
     const pane = await boot;
     loadResumePanes().set(transcriptPath, { paneId: pane.paneId, windowName: spec.windowName });
     persistResumePanes();
+    logEvent("resume", { target: pane.display, path: transcriptPath, cwd: spec.cwd, result: "ok" });
     return { target: pane.display, spawned: true };
+  } catch (error) {
+    logEvent("resume", {
+      path: transcriptPath,
+      cwd: spec.cwd,
+      result: "error",
+      reason: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
   } finally {
     resumeInFlight.delete(transcriptPath);
   }
@@ -420,23 +583,6 @@ export async function sendToResumedAgent(
 const SPAWN_READY_TIMEOUT_MS = 60_000;
 const SPAWN_POLL_MS = 1_000;
 const SPAWN_STABLE_ROUNDS = 3;
-const SHELL_COMMANDS = new Set(["zsh", "bash", "fish", "sh", "dash"]);
-/* Bottom-bar hints both CLIs draw once their composer accepts input. */
-export const READY_MARKERS = /\? for shortcuts|bypass permissions on|Press up to edit|⏎ send/;
-const CLAUDE_RESUME_PICKER = /Resume from summary/;
-/* First launch of an agent in an untrusted directory asks to trust the folder;
-   the safe default is highlighted, so Enter confirms it. */
-export const TRUST_FOLDER_PROMPT = /trust (?:the files in )?this folder|Do you trust the files/i;
-/* Blocking prompts an agent CLI draws when it needs a human decision; the
-   waiting-input scrape fallback treats a stable screen matching one of these
-   as «агент чекає на відповідь». */
-export const WAITING_INPUT_PROMPTS = [
-  /Allow command\?/i,
-  /\by\/n\b/i,
-  /Press enter to approve/i,
-  TRUST_FOLDER_PROMPT,
-  /^\s*[❯›].*\d\.\s/m,
-];
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -483,7 +629,7 @@ export async function spawnAgentWithPrompt(spec: ResumeSpec, text: string): Prom
     "-d",
     "-P",
     "-F",
-    "#{pane_id}\t#{session_name}:#{window_index}.#{pane_index}",
+    "#{pane_id}\t#{session_name}:#{window_index}.#{pane_index}\t#{pane_pid}",
     "-t",
     session + ":",
     "-n",
@@ -494,8 +640,9 @@ export async function spawnAgentWithPrompt(spec: ResumeSpec, text: string): Prom
   if (spawned.code !== 0) throw new Error(spawned.stderr.trim() || "не вдалося відкрити tmux-вікно");
   /* The %N pane id addresses the pane even after window indexes shift; the
      display form only labels UI messages. */
-  const [target = "", display = ""] = spawned.stdout.trim().split("\t");
+  const [target = "", display = "", pidRaw = ""] = spawned.stdout.trim().split("\t");
   if (!target) throw new Error("tmux не повернув адресу вікна");
+  const panePid = Number(pidRaw);
 
   /* Type the boot command literally into the fresh shell, then run it. */
   const typed = await runTmux(["send-keys", "-t", target, "-l", spec.command]);
@@ -512,7 +659,7 @@ export async function spawnAgentWithPrompt(spec: ResumeSpec, text: string): Prom
     await sleep(SPAWN_POLL_MS);
     const command = await paneCommand(target);
     if (command === null) throw new Error("вікно агента закрилося одразу після запуску");
-    if (SHELL_COMMANDS.has(command)) {
+    if (isShellCommand(command)) {
       if (agentSeen) {
         throw new Error(`агент завершився одразу після запуску: ${screenTail(await paneScreen(target))}`);
       }
@@ -521,10 +668,13 @@ export async function spawnAgentWithPrompt(spec: ResumeSpec, text: string): Prom
     agentSeen = true;
 
     const screen = await paneScreen(target);
-    /* Startup gates (trust-folder, resume-summary picker) each default to the
-       safe option, so Enter clears them. Re-answering only when the screen
-       changed avoids hammering Enter into a composer that is already ready. */
-    if (screen !== answeredScreen && (CLAUDE_RESUME_PICKER.test(screen) || TRUST_FOLDER_PROMPT.test(screen))) {
+    /* Startup gates (trust-folder, resume-summary picker, other option-list
+       dialogs) each default to the safe option, so Enter clears them.
+       Re-answering only when the screen changed avoids hammering Enter into a
+       composer that is already ready. */
+    const gate = screen !== answeredScreen ? detectStartupGate(screen) : null;
+    if (gate !== null) {
+      logEvent("gate", { target, cwd: spec.cwd, result: "ok", reason: gate });
       await runTmux(["send-keys", "-t", target, "Enter"]);
       answeredScreen = screen;
       previousScreen = "";
@@ -542,11 +692,23 @@ export async function spawnAgentWithPrompt(spec: ResumeSpec, text: string): Prom
   }
 
   const finalCommand = await paneCommand(target);
-  if (finalCommand === null || SHELL_COMMANDS.has(finalCommand)) {
+  if (finalCommand === null || isShellCommand(finalCommand)) {
+    logEvent("spawn", { target, cwd: spec.cwd, result: "error", reason: "agent_exited_on_boot" });
     throw new Error(`агент не запустився у вікні: ${screenTail(await paneScreen(target))}`);
   }
+  logEvent("spawn", {
+    target,
+    cwd: spec.cwd,
+    ...(spec.transcript ? { path: spec.transcript } : {}),
+    result: "ok",
+    meta: { window: spec.windowName },
+  });
   if (text) await sendText(target, text);
-  return { paneId: target, display: display || target };
+  return {
+    paneId: target,
+    display: display || target,
+    ...(Number.isInteger(panePid) && panePid > 0 ? { panePid } : {}),
+  };
 }
 
 export interface SavedImage {
