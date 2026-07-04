@@ -37,6 +37,9 @@ export function isSubagent(file: FileEntry): boolean {
  */
 export function isChildConversation(file: FileEntry): boolean {
   if (isSubagent(file)) return true;
+  /* A conversation spawned by a handoff is a branch of its source — unlike a
+     claude main with a parent from compaction chaining, which is quiet history. */
+  if (file.handoff && file.parent) return true;
   return file.root === "codex-sessions" && !!file.parent;
 }
 

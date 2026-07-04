@@ -113,6 +113,43 @@ src/components/feed/*.tsx      renderClaude/renderCodex/renderPlain (new)
 Keep components small and prop-driven; server logic stays in `src/lib/scanner`
 (pure functions + caches, no Next imports) so it is unit-testable.
 
+### Scheme canvas — the only project view
+
+```
+src/components/scheme/layout.ts      pure world layout: tree of nodes + edges
+src/components/scheme/SchemeBoard.tsx pannable/zoomable canvas, modes, toolbar
+src/components/scheme/Minimap.tsx    corner minimap with draggable viewport
+```
+
+`ProjectDashboard` renders a project exclusively as the scheme (the column
+strip is gone): branch groups become a diagram world — the root conversation
+on top, spawned agents one generation below and slightly indented, bezier
+arrows parent→child colored by engine. The tree structure must stay visible
+even when nothing runs: quiet child conversations render as collapsed mini
+cards stacked under their nearest displayed ancestor, wired with a dashed
+connector (click opens the branch as a full node; stacks over 8 rows scroll
+internally). The rest of the quiet history — bash tasks, codex job logs,
+compaction-chain predecessors — lies "under" the conversation as a deck
+(`N під сподом`) that expands into a chip list.
+
+Navigation: «рука» (H, or hold Space — panes become click-through, touch
+gets `touch-action: none` so one finger pans) and «виділення» (V — normal
+interaction, click selects a node). The chosen tool persists in
+`llvSchemeMode`; a coarse-pointer device without a saved tool starts on the
+hand. Plain wheel pans (shift — horizontally), ctrl/cmd+wheel and two-finger
+pinch zoom at the cursor, arrows nudge, 0 fits, 1 is 100%, double-click on
+the background fits, double-click on a node in hand mode zooms into it. The
+camera persists per project in `llvCam:<project>` (sessionStorage) and is
+clamped so a strip of the world always stays on screen.
+
+Rendering quality rules: camera state must never re-render panes (edges and
+nodes layers are memoized, handlers passed into them stay identity-stable);
+layout reshuffles animate via CSS transitions on node transforms and
+style-level SVG geometry (`d`/`cx`/`cy` — attribute fallback for engines
+without geometry properties); below z≈0.45 constant-size identity labels
+(CSS vars `--inv-z`/`--label-o`, no re-render on zoom) fade in over the
+unreadable panes.
+
 ## Server side (Node runtime, App Router route handlers)
 
 ### Agent questions and notifications
@@ -145,6 +182,12 @@ engine, kind, fmt, parent, mtime, size, activity, model, cmd, cmdDesc).
 
 `src/app/api/log/route.ts` — GET `?path&offset` — chunked tail read, same
 semantics as prototype `/log` (MAX_CHUNK 768 KiB, offset reset, utf-8 replace).
+
+`src/app/api/inbox/route.ts` — GET `?name` serves the bytes of a composer-saved
+`~/.claude/viewer-inbox` image (feed cards for image paths in user messages);
+DELETE `?name` removes it from disk behind the same-origin gate, after an
+explicit confirmation in the UI. Only a bare whitelisted-image basename is
+accepted (`src/lib/inbox.ts`), so nothing outside the inbox dir is reachable.
 
 Port the scanner pipeline from server.py into `src/lib/scanner/*.ts`, keeping
 the caching strategy (all caches are module-level singletons on `globalThis`

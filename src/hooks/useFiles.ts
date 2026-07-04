@@ -2,13 +2,21 @@
 
 import { useEffect, useState } from "react";
 
-import type { FileEntry } from "@/lib/types";
+import type { Flow } from "@/lib/flows/types";
+import type { FileEntry, FilesResponse } from "@/lib/types";
 
 const POLL_MS = 10_000;
 
+export interface FilesData {
+  files: FileEntry[];
+  flows: Flow[];
+}
+
+const EMPTY: FilesData = { files: [], flows: [] };
+
 /** Polls /api/files. Keeps the last good list on transient fetch errors. */
-export function useFiles(): FileEntry[] {
-  const [files, setFiles] = useState<FileEntry[]>([]);
+export function useFiles(): FilesData {
+  const [data, setData] = useState<FilesData>(EMPTY);
   useEffect(() => {
     let alive = true;
     let lastBody = "";
@@ -18,7 +26,12 @@ export function useFiles(): FileEntry[] {
         const body = await res.text();
         if (!alive || body === lastBody) return;
         lastBody = body;
-        setFiles(JSON.parse(body) as FileEntry[]);
+        const parsed = JSON.parse(body) as FilesResponse | FileEntry[];
+        /* The flows rollout changes the payload from a bare array to
+           {files, flows}; accept both so client and server can deploy in
+           either order. */
+        if (Array.isArray(parsed)) setData({ files: parsed, flows: [] });
+        else setData({ files: parsed.files ?? [], flows: parsed.flows ?? [] });
       } catch {
         /* keep previous list */
       }
@@ -30,5 +43,5 @@ export function useFiles(): FileEntry[] {
       clearInterval(t);
     };
   }, []);
-  return files;
+  return data;
 }

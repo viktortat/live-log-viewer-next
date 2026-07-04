@@ -1,0 +1,240 @@
+"use client";
+
+import { useEffect, useState } from "react";
+
+import type { FlowPreset, FlowsResponse, RoleConfig } from "@/lib/flows/types";
+import type { FileEntry } from "@/lib/types";
+
+const EFFORTS = ["low", "medium", "high", "xhigh"] as const;
+
+const FALLBACK_ROLES: Record<"implementer" | "reviewer", RoleConfig> = {
+  implementer: { engine: "claude", model: null, effort: null },
+  reviewer: { engine: "codex", model: null, effort: "xhigh" },
+};
+
+function RoleEditor({
+  label,
+  role,
+  onChange,
+}: {
+  label: string;
+  role: RoleConfig;
+  onChange: (next: RoleConfig) => void;
+}) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className="w-[86px] shrink-0 text-[10.5px] font-semibold text-dim">{label}</span>
+      <select
+        value={role.engine}
+        aria-label={`Двигун: ${label}`}
+        className="h-7 rounded-[8px] border border-line bg-bg px-1.5 text-[11.5px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+        onChange={(event) => onChange({ ...role, engine: event.target.value as RoleConfig["engine"], effort: null })}
+      >
+        <option value="claude">Claude</option>
+        <option value="codex">Codex</option>
+      </select>
+      <input
+        value={role.model ?? ""}
+        placeholder="модель (дефолт)"
+        aria-label={`Модель: ${label}`}
+        className="h-7 w-0 min-w-0 flex-1 rounded-[8px] border border-line bg-bg px-1.5 font-mono text-[11px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+        onChange={(event) => onChange({ ...role, model: event.target.value.trim() || null })}
+      />
+      {role.engine === "codex" ? (
+        <select
+          value={role.effort ?? ""}
+          aria-label={`Reasoning effort: ${label}`}
+          className="h-7 rounded-[8px] border border-line bg-bg px-1.5 text-[11.5px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+          onChange={(event) => onChange({ ...role, effort: event.target.value || null })}
+        >
+          <option value="">effort: дефолт</option>
+          {EFFORTS.map((effort) => (
+            <option key={effort} value={effort}>
+              {effort}
+            </option>
+          ))}
+        </select>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Flow creation panel for a conversation node: preset, per-role overrides,
+ * base ref mode, auto/manual, reviewer mode, round limit. POSTs /api/flows;
+ * the strip and the deck appear with the next files poll.
+ */
+export function FlowDialog({ file, onClose }: { file: FileEntry; onClose: () => void }) {
+  const [presets, setPresets] = useState<FlowPreset[]>([]);
+  const [presetName, setPresetName] = useState<string | null>(null);
+  const [roles, setRoles] = useState(FALLBACK_ROLES);
+  const [custom, setCustom] = useState(false);
+  const [baseMode, setBaseMode] = useState<"head" | "merge-base">("head");
+  const [mode, setMode] = useState<"auto" | "manual">("auto");
+  const [reviewerMode, setReviewerMode] = useState<"headless" | "pane">("headless");
+  const [roundLimit, setRoundLimit] = useState(5);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/flows")
+      .then((res) => res.json() as Promise<FlowsResponse>)
+      .then((json) => {
+        if (cancelled || !Array.isArray(json.presets) || !json.presets.length) return;
+        setPresets(json.presets);
+        setPresetName((prev) => prev ?? json.presets[0]!.name);
+        setRoles({ implementer: json.presets[0]!.implementer, reviewer: json.presets[0]!.reviewer });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const pickPreset = (name: string) => {
+    setPresetName(name);
+    const preset = presets.find((item) => item.name === name);
+    if (preset) setRoles({ implementer: preset.implementer, reviewer: preset.reviewer });
+  };
+
+  const create = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/flows", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          implementerPath: file.path,
+          ...(custom || !presetName ? { roles } : { preset: presetName }),
+          baseMode,
+          mode,
+          reviewerMode,
+          roundLimit,
+        }),
+      });
+      if (!res.ok) {
+        const json = (await res.json().catch(() => null)) as { error?: string } | null;
+        setError(json?.error ?? `не вдалося створити флоу (${res.status})`);
+        return;
+      }
+      onClose();
+    } catch {
+      setError("сервер недоступний");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div
+      data-scheme-ui
+      className="flex w-[420px] flex-col gap-2.5 rounded-[12px] border border-line bg-panel p-3 shadow-[0_10px_36px_rgb(20_20_30/0.18)]"
+      onKeyDown={(event) => {
+        if (event.key === "Escape") onClose();
+      }}
+    >
+      <div className="flex items-center gap-2">
+        <span className="text-[12.5px] font-bold">Запустити флоу</span>
+        <span className="min-w-0 flex-1 truncate text-[10.5px] text-dim">implement → review · ця розмова стає виконавцем</span>
+      </div>
+
+      {presets.length ? (
+        <label className="flex flex-col gap-1 text-[10.5px] font-semibold text-dim">
+          пресет
+          <select
+            value={presetName ?? ""}
+            className="h-8 rounded-[8px] border border-line bg-bg px-2 text-[12px] font-normal text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+            onChange={(event) => pickPreset(event.target.value)}
+          >
+            {presets.map((preset) => (
+              <option key={preset.name} value={preset.name}>
+                {preset.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
+
+      <button
+        className="self-start text-[10.5px] font-semibold text-dim hover:text-accent focus-visible:outline-none"
+        aria-expanded={custom}
+        onClick={() => setCustom((value) => !value)}
+      >
+        {custom ? "▾ ролі вручну" : "▸ ролі вручну (модель / effort)"}
+      </button>
+      {custom ? (
+        <div className="flex flex-col gap-1.5 rounded-[10px] border border-dashed border-line bg-bg/50 p-2">
+          <RoleEditor label="виконавець" role={roles.implementer} onChange={(next) => setRoles((prev) => ({ ...prev, implementer: next }))} />
+          <RoleEditor label="ревʼюер" role={roles.reviewer} onChange={(next) => setRoles((prev) => ({ ...prev, reviewer: next }))} />
+        </div>
+      ) : null}
+
+      <div className="grid grid-cols-2 gap-2">
+        <label className="flex flex-col gap-1 text-[10.5px] font-semibold text-dim">
+          база діфу
+          <select
+            value={baseMode}
+            className="h-8 rounded-[8px] border border-line bg-bg px-2 text-[11.5px] font-normal text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+            onChange={(event) => setBaseMode(event.target.value as "head" | "merge-base")}
+          >
+            <option value="head">від поточного HEAD</option>
+            <option value="merge-base">від merge-base з main</option>
+          </select>
+        </label>
+        <label className="flex flex-col gap-1 text-[10.5px] font-semibold text-dim">
+          ревʼюер
+          <select
+            value={reviewerMode}
+            className="h-8 rounded-[8px] border border-line bg-bg px-2 text-[11.5px] font-normal text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+            onChange={(event) => setReviewerMode(event.target.value as "headless" | "pane")}
+          >
+            <option value="headless">headless (без панелі)</option>
+            <option value="pane">tmux-панель</option>
+          </select>
+        </label>
+        <label className="flex flex-col gap-1 text-[10.5px] font-semibold text-dim">
+          переходи
+          <select
+            value={mode}
+            className="h-8 rounded-[8px] border border-line bg-bg px-2 text-[11.5px] font-normal text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+            onChange={(event) => setMode(event.target.value as "auto" | "manual")}
+          >
+            <option value="auto">авто</option>
+            <option value="manual">вручну (гейт на кожен крок)</option>
+          </select>
+        </label>
+        <label className="flex flex-col gap-1 text-[10.5px] font-semibold text-dim">
+          ліміт раундів
+          <input
+            type="number"
+            min={1}
+            max={20}
+            value={roundLimit}
+            className="h-8 rounded-[8px] border border-line bg-bg px-2 text-[11.5px] font-normal text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+            onChange={(event) => setRoundLimit(Math.max(1, Math.min(20, Number(event.target.value) || 5)))}
+          />
+        </label>
+      </div>
+
+      <div className="flex items-center gap-2">
+        {error ? <span className="min-w-0 flex-1 truncate text-[10.5px] font-semibold text-err">{error}</span> : <span className="flex-1" />}
+        <button
+          className="rounded-[8px] border border-line bg-bg px-2.5 py-1.5 text-[11.5px] font-semibold text-dim hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+          onClick={onClose}
+        >
+          Скасувати
+        </button>
+        <button
+          className="rounded-[8px] border border-accent bg-accent px-3 py-1.5 text-[12px] font-bold text-white hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:opacity-40"
+          disabled={busy}
+          onClick={() => void create()}
+        >
+          {busy ? "створюю…" : "▶ Запустити"}
+        </button>
+      </div>
+    </div>
+  );
+}

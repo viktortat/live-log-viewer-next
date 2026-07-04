@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
 
 import { listFiles } from "@/lib/scanner";
-import type { FileEntry } from "@/lib/types";
+import { loadFlows } from "@/lib/flows/store";
+import type { FilesResponse } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET(): Promise<NextResponse<FileEntry[]>> {
-  return NextResponse.json(await listFiles());
+export async function GET(): Promise<NextResponse<FilesResponse>> {
+  const files = await listFiles();
+  return NextResponse.json({ files, flows: loadFlows() });
 }

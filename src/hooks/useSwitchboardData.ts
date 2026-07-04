@@ -2,9 +2,11 @@
 
 import { useMemo } from "react";
 
+import type { Flow } from "@/lib/flows/types";
 import type { ActionEvent, FileEntry } from "@/lib/types";
 import { cleanTitle } from "@/lib/title";
 
+import { ATTENTION_STATES, claimedReviewerPaths, flowByImplementer, STATE_LABELS } from "@/components/flows/flowModel";
 import { isAuxTask, isConversation, isSubagent, kidsIndex, projectKey } from "@/components/projectModel";
 import { fmtAge } from "@/components/utils";
 
@@ -57,6 +59,11 @@ function recentBucketSort(a: SwitchboardItem, b: SwitchboardItem): number {
 function timelineLabel(file: FileEntry, latestByFile: ReadonlyMap<string, ActionEvent>): string {
   if (file.pendingQuestion) return file.pendingQuestion.kind === "plan" ? "чекає затвердження плану" : "чекає відповіді на питання";
   if (file.waitingInput) return "чекає на відповідь у терміналі";
+  /* A live agent's own plan step names its current goal better than the last
+     timeline event does. */
+  if (file.activity === "live" && file.plan?.current) {
+    return `${file.plan.done}/${file.plan.total} · ${file.plan.current}`;
+  }
   const event = latestByFile.get(file.path);
   if (event) return `${event.label} · ${fmtAge(event.ts)}`;
   if (file.activity === "live") return "працює…";
@@ -87,6 +94,7 @@ export function useSwitchboardData(
   query: string,
   now: number,
   archived: ReadonlySet<string> = EMPTY_ARCHIVED,
+  flows: Flow[] = EMPTY_FLOWS,
 ): SwitchboardData {
   return useMemo(() => {
     const counts = descendantCounts(files);
@@ -95,11 +103,17 @@ export function useSwitchboardData(
       const prev = latestByFile.get(event.file);
       if (!prev || event.ts > prev.ts) latestByFile.set(event.file, event);
     }
+    /* Flow-aware attention: an implementer whose loop waits on a decision is
+       "yours" even while its transcript looks idle; claimed reviewer runs
+       never surface as standalone cards. */
+    const flowByImpl = flowByImplementer(flows);
+    const claimed = claimedReviewerPaths(flows);
     const normalized = query.trim().toLowerCase();
     const base = files
       .filter(
         (file) =>
           !archived.has(file.path) &&
+          !claimed.has(file.path) &&
           (isConversation(file) ||
             file.activity === "live" ||
             file.activity === "stalled" ||
@@ -109,7 +123,8 @@ export function useSwitchboardData(
         const project = projectKey(file);
         const title = cleanTitle(file.title);
         const age = now - file.mtime;
-        const kind: SwitchboardCardKind =
+        const flow = flowByImpl.get(file.path);
+        let kind: SwitchboardCardKind =
           file.pendingQuestion || file.waitingInput
             ? "waiting"
             : file.activity === "live"
@@ -119,6 +134,12 @@ export function useSwitchboardData(
               : age <= DAY
                 ? "recent"
                 : "older";
+        let statusLine = timelineLabel(file, latestByFile);
+        if (flow) {
+          if (ATTENTION_STATES.has(flow.state)) kind = "waiting";
+          else if (flow.state === "reviewing" || flow.state === "relaying" || flow.state === "spawning") kind = "working";
+          statusLine = `флоу: ${STATE_LABELS[flow.state]}${flow.stateDetail ? ` — ${flow.stateDetail}` : ""}`;
+        }
         return {
           file,
           project,
@@ -126,7 +147,7 @@ export function useSwitchboardData(
           descendants: counts.get(file.path) ?? 0,
           smt: file.mtime,
           kind,
-          statusLine: timelineLabel(file, latestByFile),
+          statusLine,
         };
       })
       .filter((item) => {
@@ -140,7 +161,8 @@ export function useSwitchboardData(
     const recent = base.filter((item) => item.kind === "recent").sort(recentBucketSort);
     const older = base.filter((item) => item.kind === "older").sort(recentBucketSort);
     return { waiting, working, recent, older, livePreview: working.slice(0, 3) };
-  }, [files, events, query, now, archived]);
+  }, [files, events, query, now, archived, flows]);
 }
 
 const EMPTY_ARCHIVED: ReadonlySet<string> = new Set();
+const EMPTY_FLOWS: Flow[] = [];

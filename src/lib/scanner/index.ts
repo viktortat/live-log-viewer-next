@@ -1,12 +1,14 @@
 import type { FileEntry } from "../types";
 import { notifyQuestion } from "../push";
 import { resolveTarget } from "../tmux";
-import { activity } from "./activity";
+import { activityVerdict } from "./activity";
+import { tickFlows } from "../flows/engine";
 import { discoverFiles } from "./discover";
 import { numberValue, readJson } from "./json";
 import { linkEntries } from "./links";
 import { entryModel } from "./model";
 import { outputHolders, pidAlive } from "./process";
+import { goalFor, planFor } from "./plan";
 import { pendingQuestionFor } from "./questions";
 import { assignTranscriptPids } from "./transcripts";
 import { waitingInputFor } from "./waitingInput";
@@ -20,9 +22,13 @@ function applyProcessState(entry: FileEntry, holders: Map<string, number>, job: 
       if (pid !== null && pidAlive(pid)) {
         entry.proc = "running";
         entry.activity = "live";
+        entry.activityReason = "job_pid_alive";
       } else {
         entry.proc = "killed";
-        if (entry.activity === "live") entry.activity = Date.now() / 1000 - entry.mtime < 900 ? "recent" : "idle";
+        if (entry.activity === "live") {
+          entry.activity = Date.now() / 1000 - entry.mtime < 900 ? "recent" : "idle";
+          entry.activityReason = "job_pid_dead";
+        }
       }
       return;
     }
@@ -33,7 +39,10 @@ function applyProcessState(entry: FileEntry, holders: Map<string, number>, job: 
     const holder = holders.get(entry.path) ?? null;
     entry.pid = holder;
     entry.proc = holder === null ? "done" : "running";
-    if (holder !== null) entry.activity = "live";
+    if (holder !== null) {
+      entry.activity = "live";
+      entry.activityReason = "output_held";
+    }
   }
 }
 
@@ -68,7 +77,9 @@ export async function listFiles(): Promise<FileEntry[]> {
   for (const entry of entries) {
     const job = entry.root === "codex-jobs" ? readJson(entry.path.replace(/\.log$/, ".json")) : null;
     jobs.set(entry.path, job);
-    entry.activity = activity(entry.root, entry.path, entry.mtime, entry.size, job);
+    const verdict = activityVerdict(entry.root, entry.path, entry.mtime, entry.size, job);
+    entry.activity = verdict.state;
+    entry.activityReason = verdict.reason;
     entry.model = entryModel(entry);
   }
   for (const entry of entries) {
@@ -79,10 +90,13 @@ export async function listFiles(): Promise<FileEntry[]> {
     const pending = pendingQuestionFor(entry);
     entry.pendingQuestion = pending && entry.pid !== null ? { ...pending, paneTarget: await resolveTarget(entry.pid) } : pending;
     entry.waitingInput = await waitingInputFor(entry);
+    entry.plan = planFor(entry);
+    entry.goal = goalFor(entry);
   }));
   for (const entry of entries) {
     if (entry.pendingQuestion || entry.waitingInput) void notifyQuestion(entry);
   }
   linkEntries(entries);
+  await tickFlows(entries);
   return entries;
 }

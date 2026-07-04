@@ -44,7 +44,7 @@ function writeHash(project: string) {
 }
 
 export function Viewer() {
-  const files = useFiles();
+  const { files, flows } = useFiles();
   useAgentChimes(files);
   const [project, setProject] = useState<string>(OVERVIEW);
   const [pendingPath, setPendingPath] = useState<string | null>(null);
@@ -151,7 +151,7 @@ export function Viewer() {
         {project === OVERVIEW ? (
           <OverviewBoard files={files} onSelectProject={selectProject} onSelectFile={openFile} />
         ) : (
-          <ProjectDashboard files={files} project={project} openNonce={openNonce} />
+          <ProjectDashboard files={files} flows={flows} project={project} openNonce={openNonce} />
         )}
       </main>
     </div>

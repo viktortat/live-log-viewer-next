@@ -1,0 +1,98 @@
+import type { Flow, FlowAction, FlowState, ReviewVerdict } from "@/lib/flows/types";
+import type { FileEntry } from "@/lib/types";
+
+import { isConversation } from "@/components/projectModel";
+
+/** Flows that still occupy their implementer's node on the scheme. */
+export function isActiveFlow(flow: Flow): boolean {
+  return flow.state !== "closed";
+}
+
+export function flowByImplementer(flows: Flow[]): Map<string, Flow> {
+  const map = new Map<string, Flow>();
+  for (const flow of flows) {
+    if (!isActiveFlow(flow)) continue;
+    /* One active flow per implementer; the newest wins if the server ever
+       sends stale duplicates. */
+    const prev = map.get(flow.implementerPath);
+    if (!prev || flow.createdAt > prev.createdAt) map.set(flow.implementerPath, flow);
+  }
+  return map;
+}
+
+/**
+ * Reviewer transcripts claimed by a round deck: they render inside the deck
+ * and must never appear as standalone scheme nodes or switchboard noise.
+ */
+export function claimedReviewerPaths(flows: Flow[]): Set<string> {
+  const set = new Set<string>();
+  for (const flow of flows) {
+    for (const round of flow.rounds) {
+      if (round.reviewerPath) set.add(round.reviewerPath);
+    }
+  }
+  return set;
+}
+
+/** A conversation that can host a new flow: a root claude/codex session without one. */
+export function canStartFlow(file: FileEntry, activeByImplementer: ReadonlyMap<string, Flow>): boolean {
+  if (activeByImplementer.has(file.path)) return false;
+  if (file.engine !== "claude" && file.engine !== "codex") return false;
+  return isConversation(file);
+}
+
+export const STATE_LABELS: Record<FlowState, string> = {
+  waiting_ready: "чекає READY",
+  spawn_pending: "готовий спавнити ревʼюера",
+  spawning: "запускаю ревʼюера",
+  reviewing: "ревью",
+  relay_pending: "вердикт є — передати?",
+  relaying: "передаю зауваження",
+  fixing: "фікси",
+  approved: "затверджено",
+  done_comment: "готово із зауваженнями",
+  needs_decision: "потребує рішення",
+  paused: "пауза",
+  closed: "закрито",
+};
+
+/** States that ask for the user's attention on the strip and the switchboard. */
+export const ATTENTION_STATES: ReadonlySet<FlowState> = new Set([
+  "spawn_pending",
+  "relay_pending",
+  "needs_decision",
+  "paused",
+  "approved",
+]);
+
+export const VERDICT_GLYPHS: Record<ReviewVerdict, string> = {
+  APPROVE: "✓",
+  REQUEST_CHANGES: "✖",
+  COMMENT: "◆",
+};
+
+/** Text/background pair per verdict, in the dashboard's token palette. */
+export function verdictTone(verdict: ReviewVerdict | null): { color: string; soft: string } {
+  if (verdict === "APPROVE") return { color: "#1a8a3e", soft: "#e7f4ea" };
+  if (verdict === "REQUEST_CHANGES") return { color: "#c62828", soft: "#fbeaea" };
+  if (verdict === "COMMENT") return { color: "#b07d1f", soft: "#fdf3dd" };
+  return { color: "#8b8b95", soft: "#efeff3" };
+}
+
+export async function patchFlow(
+  id: string,
+  body: { action: FlowAction; mode?: "auto" | "manual"; rounds?: number },
+): Promise<string | null> {
+  try {
+    const res = await fetch(`/api/flows/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) return null;
+    const json = (await res.json().catch(() => null)) as { error?: string } | null;
+    return json?.error ?? `не вдалося (${res.status})`;
+  } catch {
+    return "сервер недоступний";
+  }
+}

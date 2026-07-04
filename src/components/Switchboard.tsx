@@ -6,6 +6,7 @@ import { X } from "@/components/icons";
 import { useArchivedPaths } from "@/hooks/useArchivedPaths";
 import { useTimeline } from "@/hooks/useTimeline";
 import { useSwitchboardData, type SwitchboardItem } from "@/hooks/useSwitchboardData";
+import type { Flow } from "@/lib/flows/types";
 import { cleanTitle } from "@/lib/title";
 import type { FileEntry } from "@/lib/types";
 
@@ -16,6 +17,7 @@ import { SwitchCard, type SwitchCardTone } from "./SwitchCard";
 
 interface Props {
   files: FileEntry[];
+  flows: Flow[];
   project: string;
   onOpenFile: (file: FileEntry) => void;
 }
@@ -71,7 +73,7 @@ function Section({
   );
 }
 
-export function Switchboard({ files, project, onOpenFile }: Props) {
+export function Switchboard({ files, flows, project, onOpenFile }: Props) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [olderOpen, setOlderOpen] = useState(false);
@@ -80,8 +82,8 @@ export function Switchboard({ files, project, onOpenFile }: Props) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const timeline = useTimeline(project, open);
   const { archivedPaths, archive, unarchive } = useArchivedPaths(files);
-  const data = useSwitchboardData(files, timeline.events, query, now, archivedPaths);
-  const cornerData = useSwitchboardData(files, [], "", now, archivedPaths);
+  const data = useSwitchboardData(files, timeline.events, query, now, archivedPaths, flows);
+  const cornerData = useSwitchboardData(files, [], "", now, archivedPaths, flows);
   const archivedItems = useMemo(
     () =>
       files
