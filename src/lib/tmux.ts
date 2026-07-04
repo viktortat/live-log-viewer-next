@@ -172,6 +172,15 @@ export async function sendText(target: TmuxTarget, text: string): Promise<void> 
 }
 
 /**
+ * Interrupts whatever the pane's foreground CLI is doing by sending Escape —
+ * both Claude Code and Codex CLI treat it as a safe, reversible interrupt key.
+ */
+export async function sendInterrupt(target: TmuxTarget): Promise<void> {
+  const res = await runTmux(["send-keys", "-t", target, "Escape"]);
+  if (res.code !== 0) throw new Error(res.stderr.trim() || "не вдалося надіслати Escape");
+}
+
+/**
  * The tmux session the user is actually looking at: the attached client with
  * the freshest activity wins; a detached server falls back to the most recent
  * session; no server at all yields a fresh detached «agents» session.

@@ -11,6 +11,7 @@ import {
   liveResumePane,
   resolveTarget,
   resumeSpecFor,
+  sendInterrupt,
   sendText,
   sendToResumedAgent,
 } from "@/lib/tmux";
@@ -31,11 +32,33 @@ interface SendResponse {
   spawned?: boolean;
 }
 
+interface InterruptResponse {
+  ok: true;
+  target: string;
+}
+
 /** Resolves and revalidates a request pid against the scanner's live set. */
 async function targetForKnownPid(pid: number): Promise<string | null | "unknown"> {
   const live = await knownLivePids();
   if (!live.has(pid)) return "unknown";
   return resolveTarget(pid);
+}
+
+/**
+ * Live pane for an interrupt. The pid comes from the scanner's own entry for
+ * the path — a client-supplied pid is ignored (like /api/proc), since
+ * resolving it directly would let any same-origin caller Escape an unrelated
+ * agent's pane. Never boots a fresh agent window: interrupting only makes
+ * sense against a pane that already exists.
+ */
+async function interruptTarget(filePath: string): Promise<string | null> {
+  const entry = (await listFiles()).find((item) => item.path === filePath);
+  if (entry && entry.pid !== null) {
+    const target = await resolveTarget(entry.pid);
+    if (target !== null) return target;
+  }
+  const pane = await liveResumePane(filePath);
+  return pane ? pane.display : null;
 }
 
 export async function GET(req: NextRequest): Promise<NextResponse<TargetResponse | ApiError>> {
@@ -58,13 +81,20 @@ export async function GET(req: NextRequest): Promise<NextResponse<TargetResponse
   return NextResponse.json({ target: null });
 }
 
-export async function POST(req: NextRequest): Promise<NextResponse<SendResponse | ApiError>> {
+export async function POST(req: NextRequest): Promise<NextResponse<SendResponse | InterruptResponse | ApiError>> {
   const rejection = rejectCrossOrigin(req);
   if (rejection) return rejection;
 
-  let body: { pid?: unknown; path?: unknown; text?: unknown; image?: unknown; images?: unknown };
+  let body: { pid?: unknown; path?: unknown; text?: unknown; image?: unknown; images?: unknown; action?: unknown };
   try {
-    body = (await req.json()) as { pid?: unknown; path?: unknown; text?: unknown; image?: unknown; images?: unknown };
+    body = (await req.json()) as {
+      pid?: unknown;
+      path?: unknown;
+      text?: unknown;
+      image?: unknown;
+      images?: unknown;
+      action?: unknown;
+    };
   } catch {
     return NextResponse.json({ error: "некоректний JSON" }, { status: 400 });
   }
@@ -74,6 +104,22 @@ export async function POST(req: NextRequest): Promise<NextResponse<SendResponse 
   const filePath = typeof body.path === "string" ? body.path : "";
   if (!hasPid && !filePath) {
     return NextResponse.json({ error: "потрібен pid або path" }, { status: 400 });
+  }
+
+  if (body.action === "interrupt") {
+    if (!filePath || !pathAllowed(filePath)) {
+      return NextResponse.json({ error: "для переривання потрібен path розмови" }, { status: 400 });
+    }
+    const target = await interruptTarget(filePath);
+    if (target === null) {
+      return NextResponse.json({ error: "немає активного пейна агента для переривання" }, { status: 409 });
+    }
+    try {
+      await sendInterrupt(target);
+      return NextResponse.json({ ok: true, target });
+    } catch (error) {
+      return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
+    }
   }
 
   const text = typeof body.text === "string" ? body.text : "";

@@ -2,12 +2,13 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
-import { ArrowRight, ArrowUpToLine, Loader2, Play, SquareTerminal, X } from "@/components/icons";
+import { ArrowRight, ArrowUpToLine, Loader2, Play, Square, SquareTerminal, X } from "@/components/icons";
+import { useDictation } from "@/hooks/useDictation";
 import { useTmuxTarget } from "@/hooks/useTmuxTarget";
 import type { FileEntry } from "@/lib/types";
 
 import { ImagePickerButton, ImagePreviewStrip, useImageAttachments } from "./imageAttachments";
-import { MicButton } from "./MicButton";
+import { MicButtonView } from "./MicButton";
 
 interface SentEntry {
   id: number;
@@ -56,18 +57,37 @@ export function TmuxComposer({ file }: { file: FileEntry }) {
     if (typeof window === "undefined") return "";
     return sessionStorage.getItem(draftKey(file.path)) ?? "";
   });
-  const setText = (value: string) => {
-    setTextState(value);
-    if (value) sessionStorage.setItem(draftKey(file.path), value);
+  /* Async dictation callbacks land after the render they closed over; the ref
+     always holds the latest draft, so an updater form appends to what the user
+     typed in the meantime instead of overwriting it. */
+  const textRef = useRef(text);
+  const setText = (value: string | ((prev: string) => string)) => {
+    const next = typeof value === "function" ? value(textRef.current) : value;
+    textRef.current = next;
+    setTextState(next);
+    if (next) sessionStorage.setItem(draftKey(file.path), next);
     else sessionStorage.removeItem(draftKey(file.path));
   };
   const [sending, setSending] = useState(false);
+  const [voiceSending, setVoiceSending] = useState(false);
+  const [interrupting, setInterrupting] = useState(false);
   const [status, setStatus] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [sent, setSent] = useState<SentEntry[]>([]);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const attachments = useImageAttachments({
     onError: (message) => setStatus({ kind: "err", text: message }),
     onAdded: () => setStatus(null),
+  });
+  const insertSpoken = (spoken: string) => {
+    setText((prev) => (prev ? prev.trimEnd() + " " + spoken : spoken));
+    setStatus(null);
+    inputRef.current?.focus();
+  };
+  /* onUnclaimedText catches the 120s auto-stop, whose transcript no stop()
+     promise waits for — it goes into the input for review, never auto-sent. */
+  const dictation = useDictation({
+    onError: (message) => setStatus({ kind: "err", text: message }),
+    onUnclaimedText: insertSpoken,
   });
 
   /* The field grows with its content up to ~6 rows, then scrolls inside
@@ -114,8 +134,9 @@ export function TmuxComposer({ file }: { file: FileEntry }) {
     sessionStorage.setItem(sentKey(file.path), JSON.stringify(next));
   };
 
-  const send = async () => {
-    if (sending || (!text.trim() && !attachments.images.length)) return;
+  const send = async (overrideText?: string) => {
+    const payloadText = overrideText ?? text;
+    if (sending || voiceSending || (!payloadText.trim() && !attachments.images.length)) return;
     setSending(true);
     setStatus(null);
     try {
@@ -125,7 +146,7 @@ export function TmuxComposer({ file }: { file: FileEntry }) {
         body: JSON.stringify({
           pid: file.pid ?? undefined,
           path: file.path,
-          text,
+          text: payloadText,
           images: attachments.images.map((image) => ({ base64: image.base64, mime: image.mime })),
         }),
       });
@@ -137,7 +158,7 @@ export function TmuxComposer({ file }: { file: FileEntry }) {
       const imgCount = attachments.images.length;
       const entry: SentEntry = {
         id: Date.now(),
-        text: text.trim() || (imgCount ? `${imgCount} ${imgCount === 1 ? "картинка" : "картинки"}` : ""),
+        text: payloadText.trim() || (imgCount ? `${imgCount} ${imgCount === 1 ? "картинка" : "картинки"}` : ""),
         at: Date.now(),
         via: json.spawned ? "spawn" : "pane",
       };
@@ -160,17 +181,65 @@ export function TmuxComposer({ file }: { file: FileEntry }) {
     }
   };
 
+  /* One-tap voice send: stop the recording in flight, wait for the transcript,
+     append it to whatever is already typed, then send immediately — no second
+     tap on a separate send button. A transcription failure leaves the typed
+     text untouched and never calls send(); useDictation already reported the
+     error through onError above. */
+  const stopAndSend = async () => {
+    if (sending || voiceSending) return;
+    setVoiceSending(true);
+    try {
+      const spoken = await dictation.stop();
+      if (spoken === null) return;
+      /* Read through the ref: the draft may have changed since this closure's
+         render while the transcription round-trip was in flight. */
+      const combined = textRef.current ? textRef.current.trimEnd() + " " + spoken : spoken;
+      setText(combined);
+      await send(combined);
+    } finally {
+      setVoiceSending(false);
+    }
+  };
+
+  const interrupt = async () => {
+    if (interrupting) return;
+    setInterrupting(true);
+    setStatus(null);
+    try {
+      const res = await fetch("/api/tmux", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "interrupt", path: file.path }),
+      });
+      const json = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok || !json.ok) {
+        setStatus({ kind: "err", text: json.error ?? "не вдалося перервати" });
+        return;
+      }
+      setStatus({ kind: "ok", text: "надіслано Escape — агент перервано" });
+    } catch {
+      setStatus({ kind: "err", text: "сервер недоступний" });
+    } finally {
+      setInterrupting(false);
+    }
+  };
+
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault();
     void send();
   };
 
-  const canSend = !sending && (Boolean(text.trim()) || attachments.images.length > 0);
+  const dictationRecording = dictation.phase === "rec";
+  const dictationBusy = dictation.phase === "busy";
+  const canSend =
+    !sending && !voiceSending && !dictationBusy && (dictationRecording || Boolean(text.trim()) || attachments.images.length > 0);
+  const fieldsDisabled = sending || voiceSending;
 
   return (
     <form
       onSubmit={handleSubmit}
-      className="flex shrink-0 flex-col gap-1 border-t border-line bg-[#fbfbfd] px-2.5 py-1.5"
+      className="flex shrink-0 flex-col gap-1.5 border-t border-line bg-[#fbfbfd] px-2.5 py-2"
       aria-label={spawnMode ? "Запустити агента з промптом у tmux" : `Надіслати повідомлення агенту в tmux ${target}`}
     >
       {sent.length ? (
@@ -199,65 +268,81 @@ export function TmuxComposer({ file }: { file: FileEntry }) {
           ))}
         </div>
       ) : null}
-      <div className="flex items-end gap-1.5">
-        <span
-          className="mb-[3px] inline-flex shrink-0 items-center gap-1 rounded-full bg-chip px-1.5 py-0.5 font-mono text-[9.5px] font-semibold text-[#555]"
-          title={relayMode ? "передасться через кореневу сесію гілки" : spawnMode ? "нове tmux-вікно з відновленим агентом" : `tmux ${target}`}
-        >
-          {relayMode ? (
-            <>
-              <ArrowUpToLine className="h-3 w-3" aria-hidden /> корінь
-            </>
-          ) : spawnMode ? (
-            <>
-              <Play className="h-3 w-3" aria-hidden /> resume
-            </>
-          ) : (
-            <>
-              <SquareTerminal className="h-3 w-3" aria-hidden /> {target}
-            </>
-          )}
-        </span>
-        <textarea
-          ref={inputRef}
-          value={text}
-          rows={1}
-          onChange={(event) => setText(event.target.value)}
-          onPaste={attachments.handlePaste}
-          onKeyDown={(event) => {
-            /* Enter sends like the old single-line input; Shift+Enter makes a
-               new line. Composition guard keeps IME confirms from sending. */
-            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-              event.preventDefault();
-              void send();
-            }
-          }}
-          placeholder={relayMode ? "написати — передам через кореневу сесію…" : spawnMode ? "промпт — агент запуститься в tmux…" : "написати агенту…"}
-          aria-label="Текст для агента"
-          disabled={sending}
-          className="min-w-0 flex-1 resize-none overflow-y-auto rounded-[8px] border border-line bg-panel px-2 py-1 text-[12px] leading-[18px] text-[#222] placeholder:text-dim focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-60"
-        />
-        <MicButton
-          onText={(spoken) => {
-            setText(text ? text.trimEnd() + " " + spoken : spoken);
-            setStatus(null);
-            inputRef.current?.focus();
-          }}
-          onError={(message) => setStatus({ kind: "err", text: message })}
-        />
-        <ImagePickerButton
-          ariaLabel="Додати картинки"
-          className="inline-flex shrink-0 items-center rounded-[8px] border border-line bg-panel px-2 py-1 text-dim hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-          onFiles={attachments.addFiles}
-        />
-        <button
-          type="submit"
-          disabled={!canSend}
-          aria-label={spawnMode ? "Запустити агента" : "Надіслати агенту"}
-          className="inline-flex shrink-0 items-center rounded-[8px] border border-line bg-accent px-2.5 py-1 text-white hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:opacity-40"
-        >
-          {sending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Play className="h-4 w-4" aria-hidden />}
-        </button>
+      <textarea
+        ref={inputRef}
+        value={text}
+        rows={1}
+        onChange={(event) => setText(event.target.value)}
+        onPaste={attachments.handlePaste}
+        onKeyDown={(event) => {
+          /* Enter sends like the old single-line input; Shift+Enter makes a
+             new line. Composition guard keeps IME confirms from sending.
+             During recording Enter means stop-and-send — a plain send() would
+             fire off just the typed prefix and leave the recording running. */
+          if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+            event.preventDefault();
+            if (dictation.phase === "rec") void stopAndSend();
+            else void send();
+          }
+        }}
+        placeholder={relayMode ? "написати — передам через кореневу сесію…" : spawnMode ? "промпт — агент запуститься в tmux…" : "написати агенту…"}
+        aria-label="Текст для агента"
+        disabled={fieldsDisabled}
+        className="w-full resize-none overflow-y-auto rounded-[10px] border border-line bg-panel px-2.5 py-1.5 text-[12.5px] leading-[18px] text-[#222] placeholder:text-dim focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-60"
+      />
+      <div className="flex items-center justify-between gap-1.5">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <span
+            className="inline-flex min-w-0 items-center gap-1 rounded-full bg-chip px-1.5 py-1 font-mono text-[9.5px] font-semibold text-[#555]"
+            title={relayMode ? "передасться через кореневу сесію гілки" : spawnMode ? "нове tmux-вікно з відновленим агентом" : `tmux ${target}`}
+          >
+            {relayMode ? (
+              <>
+                <ArrowUpToLine className="h-3 w-3 shrink-0" aria-hidden /> корінь
+              </>
+            ) : spawnMode ? (
+              <>
+                <Play className="h-3 w-3 shrink-0" aria-hidden /> resume
+              </>
+            ) : (
+              <>
+                <SquareTerminal className="h-3 w-3 shrink-0" aria-hidden /> <span className="truncate">{target}</span>
+              </>
+            )}
+          </span>
+          {!spawnMode ? (
+            <button
+              type="button"
+              aria-label="Перервати агента (Escape)"
+              title="надіслати Escape у пейн агента"
+              disabled={interrupting}
+              onClick={() => void interrupt()}
+              className="inline-flex shrink-0 items-center justify-center rounded-[8px] border border-line bg-panel p-2 text-dim hover:border-err/40 hover:text-err focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-50"
+            >
+              {interrupting ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Square className="h-4 w-4" fill="currentColor" aria-hidden />}
+            </button>
+          ) : null}
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <MicButtonView {...dictation} busy={voiceSending} onText={insertSpoken} />
+          <ImagePickerButton
+            ariaLabel="Додати картинки"
+            className="inline-flex shrink-0 items-center justify-center rounded-[8px] border border-line bg-panel p-2 text-dim hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+            onFiles={attachments.addFiles}
+          />
+          <button
+            type={dictationRecording ? "button" : "submit"}
+            onClick={dictationRecording ? () => void stopAndSend() : undefined}
+            disabled={!canSend}
+            aria-label={dictationRecording ? "Зупинити запис і надіслати" : spawnMode ? "Запустити агента" : "Надіслати агенту"}
+            title={dictationRecording ? "зупинити запис і надіслати" : undefined}
+            className={`inline-flex shrink-0 items-center justify-center rounded-[8px] border p-2 text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:opacity-40 ${
+              dictationRecording ? "border-err bg-err hover:opacity-90" : "border-accent bg-accent hover:opacity-90"
+            }`}
+          >
+            {sending || voiceSending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Play className="h-4 w-4" aria-hidden />}
+          </button>
+        </div>
       </div>
       <ImagePreviewStrip images={attachments.images} onRemove={attachments.removeAt} />
       {status ? (

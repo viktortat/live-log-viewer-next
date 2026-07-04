@@ -21,6 +21,7 @@ import {
   Play,
   Power,
   Sparkle,
+  Square,
   SquareTerminal,
   Terminal,
   Wrench,
@@ -45,6 +46,7 @@ export {
   Play,
   Power,
   Sparkle,
+  Square,
   SquareTerminal,
   X,
 };
