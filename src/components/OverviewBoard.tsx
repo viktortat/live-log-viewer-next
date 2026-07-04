@@ -88,7 +88,7 @@ export function OverviewBoard({ files, onSelectProject, onSelectFile }: Props) {
                         }}
                       >
                         <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${activityDot(branch.activity)}`} />
-                        <span className={`shrink-0 rounded-full px-1.5 text-[9px] font-bold ${badge.cls}`}>{badge.label}</span>
+                        <span className="shrink-0 rounded-full px-1.5 text-[9px] font-bold" style={badge.style}>{badge.label}</span>
                         <span className="truncate font-semibold">{cleanTitle(branch.title, 70)}</span>
                       </span>
                     );

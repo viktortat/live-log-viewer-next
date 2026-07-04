@@ -6,6 +6,7 @@ import { globalCache } from "./caches";
 import { taskParts } from "./discover";
 import { readJson, recordValue, recordsValue, stringValue } from "./json";
 import { fileHasNeedle, findNeedle } from "./needle";
+import { readEnvVar, readPpid } from "./process";
 import { ROOTS } from "./roots";
 
 const sidSlugCache = globalCache<string>("sid-slug");
@@ -218,6 +219,44 @@ function bgCommand(tid: string, transcripts: (string | null)[], fallbackTranscri
   return weak;
 }
 
+const COMPANION_TRANSCRIPT_ENV = "CODEX_COMPANION_TRANSCRIPT_PATH";
+const ANCESTRY_MAX_DEPTH = 15;
+
+/**
+ * Live rollouts without a job-state link still prove their spawner through
+ * /proc. The codex plugin hook exports the Claude transcript path into every
+ * Bash environment, and children keep it across exec — including the
+ * app-server broker whose ppid chain detaches to systemd, where walking
+ * ancestry alone would dead-end. A pid already attributed to a Claude
+ * transcript among the ancestors is the equivalent proof for direct spawns
+ * without the hook. Both are spawn-lineage facts; no mtime or project
+ * heuristics participate.
+ */
+function attachLiveCodexParents(entries: FileEntry[]): void {
+  const rollouts = entries.filter((entry) => entry.root === "codex-sessions" && !entry.parent && entry.pid !== null);
+  if (rollouts.length === 0) return;
+  const claudeByPid = new Map<number, string>();
+  for (const entry of entries) {
+    if (entry.root === "claude-projects" && entry.pid !== null) claudeByPid.set(entry.pid, entry.path);
+  }
+  for (const rollout of rollouts) {
+    const seen = new Set<number>();
+    for (let pid: number | null = rollout.pid; pid !== null && !seen.has(pid); pid = readPpid(pid)) {
+      seen.add(pid);
+      if (seen.size > ANCESTRY_MAX_DEPTH) break;
+      // The nearest Claude ancestor wins over the env value: a teammate agent
+      // spawned from another session re-exports the hook variable, but its own
+      // environ still carries the grandparent's transcript.
+      const owner = claudeByPid.get(pid);
+      const transcript = owner ?? readEnvVar(pid, COMPANION_TRANSCRIPT_ENV);
+      if (transcript) {
+        rollout.parent = transcript;
+        break;
+      }
+    }
+  }
+}
+
 export function linkEntries(entries: FileEntry[]): void {
   const byPath = new Map(entries.map((entry) => [entry.path, entry]));
   const threadMap = new Map<string, string>();
@@ -284,6 +323,7 @@ export function linkEntries(entries: FileEntry[]): void {
       }
     }
   }
+  attachLiveCodexParents(entries);
   chainCompactedSessions(entries);
   const rootProject = (entry: FileEntry): string => {
     const seen = new Set<string>();

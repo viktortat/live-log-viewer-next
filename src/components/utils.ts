@@ -23,7 +23,7 @@ export function hhmm(ts: unknown): string {
 
 export function typeInfo(file: FileEntry) {
   if (file.engine === "shell") return { glyph: "❯", cls: "bg-[#f1f1f4] border border-line text-[#777]", aux: true, tip: "фонова команда" };
-  if (file.root === "codex-jobs") return { glyph: "⚙", cls: "bg-white border border-dashed border-[#9fd4c8] text-codex", aux: true, tip: "джоба Codex" };
+  if (file.root === "codex-jobs") return { glyph: "⚙", cls: "bg-white border border-dashed border-[#a9c7ee] text-codex", aux: true, tip: "джоба Codex" };
   if (file.engine === "codex") return { glyph: "⌘", cls: "bg-codex-soft text-codex", aux: false, tip: "сесія Codex" };
   if (file.kind === "субагент") return { glyph: "⤷", cls: "bg-white border border-[#f3d9cd] text-claude", aux: false, tip: "субагент Claude" };
   return { glyph: "✳", cls: "bg-claude-soft text-claude", aux: false, tip: "сесія Claude" };
@@ -46,29 +46,52 @@ export function activityDot(activity: FileEntry["activity"]): string {
   return "bg-[#c9c9d1]";
 }
 
-/** Engine identity color as a raw value for SVG connectors. */
-export function engineColor(file: FileEntry): string {
-  if (file.engine === "codex") return "#0d8a72";
-  if (file.engine === "claude") return "#d97757";
-  return "#9a9aa4";
+export type ModelTint = { color: string; soft: string };
+
+/* Engine base identity: Codex blue, Claude orange. Model families shift the
+   hue so sibling agents on different models are tellable apart at a glance. */
+const ENGINE_TINTS: Record<string, ModelTint> = {
+  codex: { color: "#2f6fd0", soft: "#e8f0fb" },
+  claude: { color: "#d97757", soft: "#faeee9" },
+};
+const NEUTRAL_TINT: ModelTint = { color: "#9a9aa4", soft: "#ececf1" };
+const CLAUDE_TINTS: [RegExp, ModelTint][] = [
+  [/fable|mythos/, { color: "#c2410c", soft: "#fbeade" }],
+  [/opus/, { color: "#8a5ad6", soft: "#f1ebfb" }],
+  [/sonnet/, { color: "#e0913f", soft: "#fbf1e4" }],
+  [/haiku/, { color: "#d9a58c", soft: "#f9f1ec" }],
+];
+const CODEX_TINTS: [RegExp, ModelTint][] = [
+  [/spark/, { color: "#5ea3e4", soft: "#ecf4fd" }],
+  [/mini|nano/, { color: "#7fb1e8", soft: "#eff6fd" }],
+  [/codex/, { color: "#1d55ab", soft: "#e4edfa" }],
+];
+
+/** Identity color tinted by model family (fable deep orange, opus violet, spark light blue…). */
+export function modelTint(file: FileEntry): ModelTint {
+  const base = ENGINE_TINTS[file.engine];
+  if (!base) return NEUTRAL_TINT;
+  const model = (file.model ?? "").toLowerCase();
+  for (const [re, tint] of file.engine === "codex" ? CODEX_TINTS : CLAUDE_TINTS) {
+    if (re.test(model)) return tint;
+  }
+  return base;
 }
 
-/** Engine identity color for column top borders. */
-export function engineEdge(file: FileEntry): string {
-  if (file.engine === "codex") return "border-t-codex";
-  if (file.engine === "claude") return "border-t-claude";
-  return "border-t-[#9a9aa4]";
+/** Model-tinted identity color as a raw value for SVG connectors and dots. */
+export function engineColor(file: FileEntry): string {
+  return modelTint(file).color;
+}
+
+/** Model-tinted top border for columns; inline style so arbitrary tints work. */
+export function engineEdge(file: FileEntry): { borderTopColor: string } {
+  return { borderTopColor: modelTint(file).color };
 }
 
 export function engineBadge(file: FileEntry) {
   const label = { codex: "Codex", claude: "Claude", shell: "Bash" }[file.engine] ?? file.engine;
-  const cls =
-    file.engine === "codex"
-      ? "bg-codex-soft text-codex"
-      : file.engine === "claude"
-        ? "bg-claude-soft text-claude"
-        : "bg-[#ececf1] text-[#555]";
-  return { label, cls };
+  const tint = ENGINE_TINTS[file.engine] ?? NEUTRAL_TINT;
+  return { label, style: { backgroundColor: tint.soft, color: tint.color } };
 }
 
 export function syntheticFile(pathname: string): FileEntry {

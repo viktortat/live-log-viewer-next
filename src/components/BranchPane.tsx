@@ -8,7 +8,7 @@ import { FlipRow } from "./FlipRow";
 import { LogFeed } from "./LogFeed";
 import { ProcessStatusControls } from "./TaskHeader";
 import { TmuxComposer } from "./TmuxComposer";
-import { activityDot, cleanTitle, engineBadge, engineEdge } from "./utils";
+import { activityDot, cleanTitle, engineBadge, engineEdge, modelTint } from "./utils";
 
 const noop = () => undefined;
 
@@ -33,7 +33,8 @@ export function BranchPane({ file, files, tasks, onSelect, isRoot, onClose, drag
     <section
       className={`flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[10px] border bg-panel shadow-card ${
         isRoot ? "border-t-4" : "border-t-2"
-      } ${engineEdge(file)} ${live ? "border-ok/60 shadow-[0_0_0_3px_rgba(47,158,68,0.16)]" : "border-line"}`}
+      } ${live ? "border-ok/60 shadow-[0_0_0_3px_rgba(47,158,68,0.16)]" : "border-line"}`}
+      style={engineEdge(file)}
     >
       <header
         className={`flex h-10 shrink-0 items-center gap-1.5 border-b border-line px-2.5 ${live ? "bg-[#eef8f0]" : ""} ${
@@ -45,11 +46,14 @@ export function BranchPane({ file, files, tasks, onSelect, isRoot, onClose, drag
           className={`h-2 w-2 shrink-0 rounded-full ${activityDot(file.activity)}`}
           title={file.activity === "live" ? "працює" : file.activity === "recent" ? "закінчив" : file.activity === "stalled" ? "перервано" : "тихо"}
         />
-        <span className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${badge.cls}`}>
+        <span className="inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[10px] font-bold" style={badge.style}>
           {badge.label}
         </span>
         {file.model ? (
-          <span className="shrink-0 rounded-full bg-chip px-1.5 py-0.5 font-mono text-[9.5px] font-semibold text-[#555]">
+          <span
+            className="shrink-0 rounded-full px-1.5 py-0.5 font-mono text-[9.5px] font-semibold"
+            style={{ backgroundColor: modelTint(file).soft, color: modelTint(file).color }}
+          >
             {file.model}
           </span>
         ) : null}

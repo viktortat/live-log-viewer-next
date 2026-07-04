@@ -58,7 +58,7 @@ function GroupCrown({
           onClick={() => onSelect(root)}
         >
           <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${activityDot(root.activity)}`} />
-          <span className={`shrink-0 rounded-full px-1.5 text-[9px] font-bold ${badge.cls}`}>{badge.label}</span>
+          <span className="shrink-0 rounded-full px-1.5 text-[9px] font-bold" style={badge.style}>{badge.label}</span>
           <span className="min-w-0 truncate text-[11px] font-bold">{cleanTitle(root.title, 60)}</span>
           {count - 1 + quietCount > 0 ? (
             <span className="shrink-0 text-[10px] font-semibold text-dim">

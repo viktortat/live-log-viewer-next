@@ -35,7 +35,7 @@ export function ResidualStrip({ items, onSelect }: { items: FileEntry[]; onSelec
                 onClick={() => onSelect(file)}
               >
                 <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${activityDot(file.activity)}`} />
-                <span className={`shrink-0 rounded-full px-1.5 text-[9px] ${badge.cls}`}>{badge.label}</span>
+                <span className="shrink-0 rounded-full px-1.5 text-[9px]" style={badge.style}>{badge.label}</span>
                 <span className="truncate">{title}</span>
                 <span className="shrink-0 font-normal text-dim">{fmtAge(file.mtime)}</span>
               </button>

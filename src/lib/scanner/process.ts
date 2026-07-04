@@ -197,6 +197,39 @@ function readTty(pid: number): number {
   return Number.isInteger(tty) && tty > 0 ? tty : 0;
 }
 
+/** ppid from /proc/<pid>/stat; null when the process is gone or is pid 1. */
+export function readPpid(pid: number): number | null {
+  let stat: string;
+  try {
+    stat = fs.readFileSync(path.join(PROC, String(pid), "stat"), "utf8");
+  } catch {
+    return null;
+  }
+  const afterComm = stat.slice(stat.lastIndexOf(")") + 2).trim().split(/\s+/);
+  const ppid = Number(afterComm[1]);
+  return Number.isInteger(ppid) && ppid > 1 ? ppid : null;
+}
+
+/**
+ * Value of `name` in /proc/<pid>/environ. The environ array can carry the
+ * variable more than once when wrapper shells re-export it; the last
+ * occurrence is what child processes inherit.
+ */
+export function readEnvVar(pid: number, name: string): string | null {
+  let environ: string;
+  try {
+    environ = fs.readFileSync(path.join(PROC, String(pid), "environ"), "utf8");
+  } catch {
+    return null;
+  }
+  const prefix = name + "=";
+  let value: string | null = null;
+  for (const pair of environ.split("\0")) {
+    if (pair.startsWith(prefix)) value = pair.slice(prefix.length);
+  }
+  return value;
+}
+
 /** All non-helper claude/codex processes currently alive, memoised briefly. */
 export function agentProcesses(fresh = false): AgentProcess[] {
   const now = Date.now();
