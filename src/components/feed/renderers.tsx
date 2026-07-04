@@ -1143,6 +1143,99 @@ function MemCitationCard({ item }: { item: MemCitationItem }) {
   );
 }
 
+type ProtocolPayload = Record<string, unknown>;
+
+const PROTOCOL_TYPE_META: Record<string, { icon: string; label: string; tone: "amber" | "accent" }> = {
+  shutdown_request: { icon: "⏻", label: "запит на завершення", tone: "amber" },
+  shutdown_response: { icon: "⏻", label: "відповідь на завершення", tone: "amber" },
+  plan_approval_request: { icon: "📋", label: "запит на затвердження плану", tone: "accent" },
+  plan_approval_response: { icon: "📋", label: "вердикт по плану", tone: "accent" },
+};
+
+function protocolToneClass(tone: "amber" | "accent"): string {
+  return tone === "amber" ? "border-[#d89b21]/35 bg-[#fff9ea] text-[#9a6500]" : "border-accent/25 bg-accent/10 text-accent";
+}
+
+/** tmsg text is sometimes an inline protocol envelope (shutdown/plan-approval
+    handshake) instead of prose; any non-JSON or non-object payload falls back
+    to the plain tmsg render, so parsing stays defensive end to end. */
+function parseProtocolPayload(text: string): ProtocolPayload | null {
+  let trimmed = text.trim();
+  if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+    trimmed = trimmed.slice(1, -1).trim();
+  }
+  if (!trimmed.startsWith("{")) return null;
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as ProtocolPayload;
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function asProtocolString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length ? value : undefined;
+}
+
+function ApproveChip({ approve }: { approve: boolean }) {
+  return (
+    <span className={`rounded-full border px-2 py-0.5 text-[10.5px] font-extrabold ${approve ? "border-ok/25 bg-[#eefaf1] text-ok" : "border-err/25 bg-[#fff0f0] text-err"}`}>
+      {approve ? "схвалено" : "відхилено"}
+    </span>
+  );
+}
+
+function ProtocolMeta({ payload }: { payload: ProtocolPayload }) {
+  const from = asProtocolString(payload.from);
+  const requestId = asProtocolString(payload.requestId);
+  const ts = hhmm(payload.timestamp);
+  if (!from && !requestId && !ts) return null;
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] text-dim">
+      {from ? <span>від {from}</span> : null}
+      {requestId ? (
+        <span className="truncate font-mono" title={requestId}>
+          {requestId.length > 40 ? requestId.slice(0, 40) + "…" : requestId}
+        </span>
+      ) : null}
+      {ts ? <span>{ts}</span> : null}
+    </div>
+  );
+}
+
+function ProtocolMessageBody({ payload }: { payload: ProtocolPayload }) {
+  const type = asProtocolString(payload.type);
+  const meta = type ? PROTOCOL_TYPE_META[type] : undefined;
+  if (!meta) {
+    return (
+      <div className="text-[13px]">
+        <div className="text-dim">структуроване повідомлення</div>
+        <details className="mt-1 text-[12px]">
+          <summary className="cursor-pointer list-none font-semibold text-accent">показати JSON</summary>
+          <pre className="mt-1 max-h-[280px] overflow-auto whitespace-pre-wrap rounded-md bg-chip px-2.5 py-2 font-mono text-[11.5px]">
+            {JSON.stringify(payload, null, 2)}
+          </pre>
+        </details>
+      </div>
+    );
+  }
+  const approve = typeof payload.approve === "boolean" ? payload.approve : undefined;
+  const prose = asProtocolString(payload.reason) ?? asProtocolString(payload.feedback);
+  return (
+    <div className="text-[13px]">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={`rounded-full border px-2.5 py-0.5 text-[11.5px] font-bold ${protocolToneClass(meta.tone)}`}>
+          {meta.icon} {meta.label}
+        </span>
+        {approve !== undefined ? <ApproveChip approve={approve} /> : null}
+      </div>
+      {prose ? <div className="mt-1.5 whitespace-pre-wrap break-words">{mdBlocks(prose)}</div> : null}
+      <ProtocolMeta payload={payload} />
+    </div>
+  );
+}
+
 export function FeedItem({ item }: { item: Item }) {
   if (item.kind === "image") return <ImageCard media={item.media} data={item.data} w={item.w} h={item.h} bytes={item.bytes} />;
   if (item.kind === "blob") return <BlobCard bytes={item.bytes} text={item.text} />;
@@ -1212,6 +1305,7 @@ export function FeedItem({ item }: { item: Item }) {
     );
   }
   if (item.kind === "tmsg") {
+    const protocol = parseProtocolPayload(item.text);
     const long = item.text.length > 420 || item.text.split("\n").length > 6;
     return (
       <div className="my-2.5 ml-9 overflow-hidden rounded-[14px] border border-accent/25 bg-[#f8f8fd] shadow-card">
@@ -1230,19 +1324,25 @@ export function FeedItem({ item }: { item: Item }) {
           {hhmm(item.ts) ? <span className="ml-auto shrink-0 text-[11px] text-dim">{hhmm(item.ts)}</span> : null}
         </div>
         <div className="px-3.5 pb-2.5 pt-1">
-          {item.summary ? <div className="text-[13px] font-bold">{md(item.summary)}</div> : null}
-          {long ? (
-            <details className="group/tmsg mt-0.5 whitespace-pre-wrap break-words text-[13px]">
-              <summary className="cursor-pointer list-none text-[12.5px] text-[#555] [&::-webkit-details-marker]:hidden">
-                <span className="group-open/tmsg:hidden">
-                  {item.text.slice(0, 260).trimEnd()}… <span className="font-semibold text-accent">показати все</span>
-                </span>
-                <span className="hidden text-[11px] font-semibold text-dim group-open/tmsg:inline">згорнути ↥</span>
-              </summary>
-              {mdBlocks(item.text)}
-            </details>
+          {protocol ? (
+            <ProtocolMessageBody payload={protocol} />
           ) : (
-            <div className="mt-0.5 whitespace-pre-wrap break-words text-[13px]">{mdBlocks(item.text)}</div>
+            <>
+              {item.summary ? <div className="text-[13px] font-bold">{md(item.summary)}</div> : null}
+              {long ? (
+                <details className="group/tmsg mt-0.5 whitespace-pre-wrap break-words text-[13px]">
+                  <summary className="cursor-pointer list-none text-[12.5px] text-[#555] [&::-webkit-details-marker]:hidden">
+                    <span className="group-open/tmsg:hidden">
+                      {item.text.slice(0, 260).trimEnd()}… <span className="font-semibold text-accent">показати все</span>
+                    </span>
+                    <span className="hidden text-[11px] font-semibold text-dim group-open/tmsg:inline">згорнути ↥</span>
+                  </summary>
+                  {mdBlocks(item.text)}
+                </details>
+              ) : (
+                <div className="mt-0.5 whitespace-pre-wrap break-words text-[13px]">{mdBlocks(item.text)}</div>
+              )}
+            </>
           )}
         </div>
       </div>
