@@ -189,29 +189,103 @@ function md(text: string): ReactNode {
   });
 }
 
+const TABLE_ROW_RE = /^\s*\|.*\|\s*$/;
+const TABLE_SEP_CELL_RE = /^:?-{1,}:?$/;
+
+function MdTable({ rows }: { rows: string[] }) {
+  const parsed = rows.map((row) =>
+    row
+      .trim()
+      .replace(/^\|/, "")
+      .replace(/\|$/, "")
+      .split("|")
+      .map((cell) => cell.trim()),
+  );
+  const hasHeader = parsed.length > 1 && parsed[1].every((cell) => TABLE_SEP_CELL_RE.test(cell));
+  const head = hasHeader ? parsed[0] : null;
+  const body = hasHeader ? parsed.slice(2) : parsed;
+  return (
+    <div className="my-1.5 max-w-full overflow-x-auto">
+      <table className="border-collapse text-[12.5px]">
+        {head ? (
+          <thead>
+            <tr>
+              {head.map((cell, i) => (
+                <th key={i} className="border border-line bg-chip px-2.5 py-1 text-left font-semibold">
+                  {md(cell)}
+                </th>
+              ))}
+            </tr>
+          </thead>
+        ) : null}
+        <tbody>
+          {body.map((row, i) => (
+            <tr key={i}>
+              {row.map((cell, j) => (
+                <td key={j} className="border border-line px-2.5 py-1 align-top">
+                  {md(cell)}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 /* Block-level pass for whole prose messages rendered inside whitespace-pre-wrap:
-   newlines survive as text, so headings and table rows are styled inline per line. */
+   newlines survive as text; tables group into real <table>, headings and
+   blockquotes are styled per line, everything else goes through the inline pass. */
 function mdBlocks(text: string): ReactNode {
-  const segments = text.split(/(\n)/);
-  return segments.map((seg, i) => {
-    if (seg === "\n" || seg === "") return seg;
-    const heading = seg.match(/^#{1,6}\s+(.*)$/);
+  const lines = text.split("\n");
+  const out: ReactNode[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    if (/^\s*```/.test(lines[i])) {
+      const start = i;
+      i++;
+      while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) i++;
+      const code = lines.slice(start + 1, i).join("\n");
+      if (i < lines.length) i++;
+      if (out[out.length - 1] === "\n") out.pop();
+      out.push(
+        <pre key={`c${start}`} className="my-1.5 max-w-full overflow-x-auto rounded-[10px] border border-line bg-bg px-3 py-2 font-mono text-[11.5px]">
+          {code}
+        </pre>,
+      );
+      continue;
+    }
+    if (TABLE_ROW_RE.test(lines[i])) {
+      const start = i;
+      while (i < lines.length && TABLE_ROW_RE.test(lines[i])) i++;
+      /* The table div is a block element: the pending newline would add an empty row. */
+      if (out[out.length - 1] === "\n") out.pop();
+      out.push(<MdTable key={`t${start}`} rows={lines.slice(start, i)} />);
+      continue;
+    }
+    const line = lines[i];
+    const heading = line.match(/^#{1,6}\s+(.*)$/);
+    const quote = line.match(/^>\s?(.*)$/);
     if (heading) {
-      return (
+      out.push(
         <span key={i} className="text-[14px] font-bold">
           {md(heading[1])}
-        </span>
+        </span>,
       );
-    }
-    if (/^\s*\|.*\|\s*$/.test(seg)) {
-      return (
-        <span key={i} className="font-mono text-[12px]">
-          {seg}
-        </span>
+    } else if (quote) {
+      out.push(
+        <span key={i} className="border-l-2 border-line pl-2 text-dim">
+          {md(quote[1])}
+        </span>,
       );
+    } else {
+      out.push(<Fragment key={i}>{md(line)}</Fragment>);
     }
-    return <Fragment key={i}>{md(seg)}</Fragment>;
-  });
+    i++;
+    if (i < lines.length) out.push("\n");
+  }
+  return out;
 }
 
 /* Applied to tool output, command lines, blobs, and raw log rows before render.
@@ -981,13 +1055,7 @@ function ReviewCard({ item }: { item: ReviewCardItem }) {
       </div>
       <div className="px-3.5 py-2.5">
         {item.summary.length ? (
-          <div className="mb-2 space-y-1 text-[13px] text-[#444]">
-            {item.summary.map((line, idx) => (
-              <div key={idx} className="whitespace-pre-wrap break-words">
-                {md(line)}
-              </div>
-            ))}
-          </div>
+          <div className="mb-2 whitespace-pre-wrap break-words text-[13px] text-[#444]">{mdBlocks(item.summary.join("\n"))}</div>
         ) : null}
         {visibleFindings.length ? (
           <div className="space-y-2">
@@ -1003,7 +1071,7 @@ function ReviewCard({ item }: { item: ReviewCardItem }) {
                 {finding.body && finding.body !== finding.title ? (
                   <details className="mt-1 text-[12px] text-dim">
                     <summary className="cursor-pointer list-none font-semibold text-accent">details</summary>
-                    <div className="mt-1 whitespace-pre-wrap break-words">{md(finding.body)}</div>
+                    <div className="mt-1 whitespace-pre-wrap break-words">{mdBlocks(finding.body)}</div>
                   </details>
                 ) : null}
               </div>
@@ -1107,10 +1175,10 @@ export function FeedItem({ item }: { item: Item }) {
                 </span>
                 <span className="hidden text-[11px] font-semibold text-dim group-open/usr:inline">згорнути ↥</span>
               </summary>
-              {item.text}
+              {mdBlocks(item.text)}
             </details>
           ) : (
-            item.text
+            mdBlocks(item.text)
           )}
         </div>
       </div>
@@ -1162,7 +1230,7 @@ export function FeedItem({ item }: { item: Item }) {
           {hhmm(item.ts) ? <span className="ml-auto shrink-0 text-[11px] text-dim">{hhmm(item.ts)}</span> : null}
         </div>
         <div className="px-3.5 pb-2.5 pt-1">
-          {item.summary ? <div className="text-[13px] font-bold">{item.summary}</div> : null}
+          {item.summary ? <div className="text-[13px] font-bold">{md(item.summary)}</div> : null}
           {long ? (
             <details className="group/tmsg mt-0.5 whitespace-pre-wrap break-words text-[13px]">
               <summary className="cursor-pointer list-none text-[12.5px] text-[#555] [&::-webkit-details-marker]:hidden">
@@ -1171,10 +1239,10 @@ export function FeedItem({ item }: { item: Item }) {
                 </span>
                 <span className="hidden text-[11px] font-semibold text-dim group-open/tmsg:inline">згорнути ↥</span>
               </summary>
-              {item.text}
+              {mdBlocks(item.text)}
             </details>
           ) : (
-            <div className="mt-0.5 whitespace-pre-wrap break-words text-[13px]">{item.text}</div>
+            <div className="mt-0.5 whitespace-pre-wrap break-words text-[13px]">{mdBlocks(item.text)}</div>
           )}
         </div>
       </div>
@@ -1196,11 +1264,11 @@ export function FeedItem({ item }: { item: Item }) {
           🤔 {item.text.slice(0, 150)}
           {long ? "…" : ""}
         </summary>
-        {long ? <div className="whitespace-pre-wrap break-words pt-1 not-italic">{item.text}</div> : null}
+        {long ? <div className="whitespace-pre-wrap break-words pt-1 not-italic">{mdBlocks(item.text)}</div> : null}
       </details>
     );
   }
   if (item.kind === "svc") return <div className="my-1 break-words text-[11.5px] text-dim">{item.text}</div>;
-  if (item.kind === "note") return <div className="my-2 break-words text-[12.5px] text-dim">{item.text}</div>;
+  if (item.kind === "note") return <div className="my-2 break-words text-[12.5px] text-dim">{md(item.text)}</div>;
   return <div className={`my-0.5 break-words text-[12.5px] ${item.err ? "text-err" : "text-[#555]"}`}>{item.text}</div>;
 }
