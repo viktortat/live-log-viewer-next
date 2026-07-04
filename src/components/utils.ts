@@ -109,6 +109,7 @@ export function syntheticFile(pathname: string): FileEntry {
     kind: "",
     title: cleanTitle(pathname.split("/").pop() || pathname, 120),
     project: "",
+    worktree: undefined,
     mtime: Date.now() / 1000,
     size: 0,
     activity: "idle",

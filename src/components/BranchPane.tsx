@@ -102,6 +102,11 @@ export function BranchPane({ file, files, tasks, onSelect, isRoot, onClose, drag
           </span>
         ) : null}
         {file.ctx ? <CtxChip ctx={file.ctx} /> : null}
+        {file.worktree ? (
+          <span className="shrink-0 rounded-full border border-line/80 px-1.5 py-0.5 font-mono text-[9.5px] text-dim" title={`Ворк-дерево ${file.worktree}`}>
+            wt {file.worktree}
+          </span>
+        ) : null}
         {file.plan ? <PlanChip plan={file.plan} /> : null}
         {file.goal ? <GoalChip goal={file.goal} /> : null}
         {isRoot ? null : (

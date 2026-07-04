@@ -17,6 +17,8 @@ export interface FileEntry {
   /** Path relative to its root. */
   name: string;
   project: string;
+  /** Git worktree name when cwd lives under <repo>/.claude/worktrees/<name>. */
+  worktree?: string;
   title: string;
   engine: Engine;
   kind: string;

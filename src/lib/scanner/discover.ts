@@ -69,6 +69,7 @@ export function discoverFiles(): FileEntry[] {
       root: entry.rootName,
       name: path.relative(entry.root, entry.path),
       project: meta.project,
+      worktree: meta.worktree,
       title: meta.title,
       engine: meta.engine,
       kind: meta.kind,

@@ -9,6 +9,7 @@ import { readJson, recordValue, recordsValue, stringValue } from "./json";
 
 interface Meta {
   project: string;
+  worktree?: string;
   title: string;
   engine: Engine;
   kind: string;
@@ -23,7 +24,7 @@ const metaCache = globalCache<[number, Meta]>("meta");
 // fixed. A head that has not yet produced a title (empty/short file) is left
 // open so growth can still yield one.
 const titleCache = globalCache<[number, string | null]>("title");
-const codexProjectCache = globalCache<string>("codex-project");
+const codexProjectCache = globalCache<{ project: string; worktree?: string }>("codex-project");
 
 const HEAD_BYTES = 131_072;
 
@@ -54,6 +55,49 @@ export function projectFromSlug(slug: string): string {
     if (slug.startsWith(prefix)) return slug.slice(prefix.length) || slug;
   }
   return slug;
+}
+
+function worktreeFromPath(cwd: string): { repo: string; worktree: string } | null {
+  const marker = path.sep + ".claude" + path.sep + "worktrees" + path.sep;
+  const index = cwd.indexOf(marker);
+  if (index < 0) return null;
+  const rest = cwd.slice(index + marker.length).split(path.sep).filter(Boolean);
+  const worktree = rest[0];
+  if (!worktree) return null;
+  return { repo: cwd.slice(0, index), worktree };
+}
+
+function projectInfoFromCwd(cwd: string): { project: string; worktree?: string } | null {
+  const worktree = worktreeFromPath(cwd);
+  if (worktree) return { project: path.basename(worktree.repo), worktree: worktree.worktree };
+  const project = path.basename(cwd);
+  return project ? { project } : null;
+}
+
+function worktreeFromSlug(slug: string): { project: string; worktree: string } | null {
+  const marker = "--claude-worktrees-";
+  const index = slug.indexOf(marker);
+  if (index < 0) return null;
+  const worktree = slug.slice(index + marker.length);
+  if (!worktree) return null;
+  const repoSlug = slug.slice(0, index);
+  const project = repoSlug.split("--").at(-1)?.split("-").filter(Boolean).at(-1);
+  if (!project) return null;
+  const dashedProject = repoSlug.slice(repoSlug.lastIndexOf("-" + project) + 1) || project;
+  return { project: dashedProject, worktree };
+}
+
+function cwdFromLines(lines: string[]): string | null {
+  for (const line of lines) {
+    try {
+      const parsed = JSON.parse(line);
+      const cwd = stringValue(recordValue(parsed)?.cwd);
+      if (cwd) return cwd;
+    } catch {
+      continue;
+    }
+  }
+  return null;
 }
 
 function goodTitle(text: unknown): string | null {
@@ -129,6 +173,7 @@ export function describe(rootName: RootKey, root: string, pathname: string, st: 
   const rel = path.relative(root, pathname);
   const fn = path.basename(pathname);
   let project = "інше";
+  let worktree: string | undefined;
   let title: string | null = null;
   let engine: Engine = "claude";
   let kind = "";
@@ -148,18 +193,25 @@ export function describe(rootName: RootKey, root: string, pathname: string, st: 
       title = (head + (summary ? " — " + summary : "")) || fn;
     } else title = fn;
   } else if (rootName === "codex-sessions") {
-    project = codexProjectCache.get(pathname) ?? "";
-    if (!project) {
+    const cachedProject = codexProjectCache.get(pathname);
+    if (cachedProject) {
+      project = cachedProject.project;
+      worktree = cachedProject.worktree;
+    } else {
+      project = "";
       const head = readHead(pathname, st.size);
       if (head) {
         try {
           const first = JSON.parse(head.text.split("\n")[0] ?? "{}");
-          project = path.basename(stringValue(recordValue(first.payload)?.cwd) ?? "");
+          const cwd = stringValue(recordValue(first.payload)?.cwd) ?? "";
+          const info = projectInfoFromCwd(cwd);
+          project = info?.project ?? "";
+          worktree = info?.worktree;
         } catch {
           project = "";
         }
       }
-      if (project) codexProjectCache.set(pathname, project);
+      if (project) codexProjectCache.set(pathname, { project, worktree });
     }
     if (!project) project = "codex";
     engine = "codex";
@@ -168,7 +220,16 @@ export function describe(rootName: RootKey, root: string, pathname: string, st: 
     title = scanJsonlTitle(pathname, st.size, true) ?? "Сесія Codex";
   } else if (rootName === "claude-projects") {
     const slug = rel.split(path.sep)[0] ?? "";
-    project = projectFromSlug(slug);
+    const worktreeInfo = worktreeFromSlug(slug);
+    project = worktreeInfo?.project ?? projectFromSlug(slug);
+    worktree = worktreeInfo?.worktree;
+    if (worktreeInfo) {
+      const head = readHead(pathname, st.size);
+      const cwd = head ? cwdFromLines(head.text.split("\n").slice(0, 25)) : null;
+      const info = cwd ? projectInfoFromCwd(cwd) : null;
+      project = info?.project ?? project;
+      worktree = info?.worktree ?? worktree;
+    }
     fmt = "claude";
     if (fn.startsWith("agent-")) {
       kind = "субагент";
@@ -190,6 +251,7 @@ export function describe(rootName: RootKey, root: string, pathname: string, st: 
   }
   const meta = {
     project,
+    worktree,
     title: cleanTitle(title ?? fn, 120),
     engine,
     kind,
