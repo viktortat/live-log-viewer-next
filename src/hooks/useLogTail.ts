@@ -35,9 +35,12 @@ export interface LogTailState {
  * Forward tail polling plus on-demand backward history: `lines` always hold a
  * contiguous window ending at the live tail; `loadOlder` extends the window
  * toward the file start one chunk at a time. `cap` trims old lines on append
- * (dashboard columns); 0 keeps everything (focus mode).
+ * (dashboard columns); 0 keeps everything. The value may change between
+ * renders — the caller drops the cap while the reader scrolled up, so
+ * trimming never shifts what is being read.
  */
 export function useLogTail(file: FileEntry | null, pausedInput = false, cap = 2500): LogTailState {
+  const capRef = useRef(cap);
   const [lines, setLines] = useState<string[]>([]);
   const [size, setSize] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -54,6 +57,10 @@ export function useLogTail(file: FileEntry | null, pausedInput = false, cap = 25
   const genRef = useRef(0);
   const pausedRef = useRef(false);
   const olderBusyRef = useRef(false);
+
+  useEffect(() => {
+    capRef.current = cap;
+  }, [cap]);
 
   useEffect(() => {
     pausedRef.current = paused || pausedInput;
@@ -117,7 +124,8 @@ export function useLogTail(file: FileEntry | null, pausedInput = false, cap = 25
           tailRef.current = parts.pop() ?? "";
           const complete = parts.map((line) => line.trim()).filter(Boolean);
           if (offsetRef.current === 0) setLines(complete);
-          else if (complete.length) setLines((prev) => (cap > 0 ? prev.concat(complete).slice(-cap) : prev.concat(complete)));
+          else if (complete.length)
+            setLines((prev) => (capRef.current > 0 ? prev.concat(complete).slice(-capRef.current) : prev.concat(complete)));
           firstRef.current = false;
         }
         offsetRef.current = chunk.offset;

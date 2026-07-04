@@ -5,8 +5,10 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLogTail } from "@/hooks/useLogTail";
 import type { FileEntry } from "@/lib/types";
 
+import { isAwaitingUser } from "@/hooks/useSwitchboardData";
+
 import { buildFeed, FeedItem } from "./feed/renderers";
-import { isAuxTask } from "./projectModel";
+import { isSubagent } from "./projectModel";
 import { TaskHeader } from "./TaskHeader";
 
 /** Items rendered initially and added per «показати раніше» step. */
@@ -40,13 +42,51 @@ interface Props {
 }
 
 export function LogFeed({ file, files, onSelect, showSvc, lineFilter, onStatus, paused, follow, setFollow, compact = false }: Props) {
-  const tail = useLogTail(file, paused, compact ? 2500 : 0);
+  /* The scroll magnet lives per feed instance, so each column remembers its
+     own state across polls: glued to the live tail, or released by the user. */
+  const [magnet, setMagnetState] = useState(follow);
+  /* Released reader must never lose lines above the viewport: the tail cap
+     applies only while the magnet holds the bottom in view anyway. */
+  const tail = useLogTail(file, paused, magnet && compact ? 2500 : 0);
   const scroller = useRef<HTMLDivElement | null>(null);
   const anchorRef = useRef<{ top: number; height: number } | null>(null);
   const [visibleCount, setVisibleCount] = useState(RENDER_STEP);
+  const [newCount, setNewCount] = useState(0);
+  const [pulse, setPulse] = useState(false);
+  const magnetRef = useRef(magnet);
+  const lastLenRef = useRef(0);
+  const lastPrependRef = useRef(0);
+  const pulseTimer = useRef<number | null>(null);
 
-  /* eslint-disable-next-line react-hooks/set-state-in-effect */
+  const setMagnet = (value: boolean, withPulse = false) => {
+    magnetRef.current = value;
+    setMagnetState(value);
+    setFollow(value);
+    if (value) setNewCount(0);
+    if (withPulse) {
+      setPulse(true);
+      if (pulseTimer.current) window.clearTimeout(pulseTimer.current);
+      pulseTimer.current = window.setTimeout(() => setPulse(false), 450);
+    }
+  };
+
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => setVisibleCount(RENDER_STEP), [file?.path]);
+  /* External Follow toggle (focus header) drives the same magnet. */
+  useEffect(() => {
+    if (follow !== magnetRef.current) {
+      magnetRef.current = follow;
+      setMagnetState(follow);
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      if (follow) setNewCount(0);
+    }
+  }, [follow]);
+  useEffect(
+    () => () => {
+      if (pulseTimer.current) window.clearTimeout(pulseTimer.current);
+    },
+    [],
+  );
 
   const feed = useMemo(
     () => (file ? buildFeed(file, tail.lines, showSvc, lineFilter.toLowerCase()) : { items: [], hiddenServiceCount: 0 }),
@@ -62,9 +102,20 @@ export function LogFeed({ file, files, onSelect, showSvc, lineFilter, onStatus, 
     else onStatus("");
   }, [tail.error, tail.size, tail.tickTime, file, onStatus]);
 
+  /* Glued: keep the bottom in view. Released: count what arrived meanwhile
+     (prepended history is old content, so it stays out of the counter). */
   useEffect(() => {
-    if (follow && scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight;
-  }, [feed.items.length, follow]);
+    const len = feed.items.length;
+    const prepended = tail.prependGen !== lastPrependRef.current;
+    lastPrependRef.current = tail.prependGen;
+    const delta = len - lastLenRef.current;
+    lastLenRef.current = len;
+    if (magnet) {
+      if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight;
+    } else if (!prepended && delta > 0) {
+      setNewCount((count) => count + delta);
+    }
+  }, [feed.items.length, magnet, tail.prependGen]);
 
   /* Older history grows the content above the viewport; keep what the user
      was reading in place by compensating the scroll offset. */
@@ -92,29 +143,58 @@ export function LogFeed({ file, files, onSelect, showSvc, lineFilter, onStatus, 
         ? "✳ думає…"
         : "✳ працює…";
 
+  const jumpToTail = () => {
+    const el = scroller.current;
+    if (el) el.scrollTop = el.scrollHeight;
+    setMagnet(true, true);
+  };
+
   return (
-    <div
-      ref={scroller}
-      className={compact ? "min-h-0 flex-1 overflow-y-auto py-3" : "flex-1 overflow-y-auto py-6"}
-      onScroll={(event) => {
-        if (compact) return;
-        const el = event.currentTarget;
-        const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 60;
-        if (atBottom !== follow) setFollow(atBottom);
-        if (el.scrollTop < 120 && canRevealOlder && !tail.loadingOlder && !tail.loading) revealOlder();
-      }}
-    >
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      {file && feed.items.length ? (
+        magnet ? (
+          file.activity === "live" ? (
+            <div
+              className={`pointer-events-none absolute bottom-2 right-3 z-10 rounded-full bg-ok px-2 py-0.5 text-[10px] font-bold text-white shadow-card transition-transform duration-200 ${
+                pulse ? "scale-125" : "scale-100"
+              }`}
+            >
+              ⤓ живий хвіст
+            </div>
+          ) : null
+        ) : (
+          <button
+            className="absolute bottom-2 right-3 z-10 rounded-full border border-line bg-panel px-2.5 py-1 text-[11px] font-semibold text-ink shadow-card hover:border-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+            aria-label="Повернутись до живого хвоста"
+            onClick={jumpToTail}
+          >
+            ↓ {newCount ? `${newCount} нових` : "вниз"}
+          </button>
+        )
+      ) : null}
+      <div
+        ref={scroller}
+        className={compact ? "min-h-0 flex-1 overflow-y-auto py-3" : "min-h-0 flex-1 overflow-y-auto py-6"}
+        onScroll={(event) => {
+          const el = event.currentTarget;
+          const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 50;
+          if (atBottom && !magnetRef.current) setMagnet(true, true);
+          else if (!atBottom && magnetRef.current) setMagnet(false);
+          if (el.scrollTop < 120 && canRevealOlder && !tail.loadingOlder && !tail.loading) revealOlder();
+        }}
+      >
       <div className={compact ? "px-3 pb-4 text-[13px]" : "mx-auto w-full max-w-[1060px] px-6 pb-16"}>
         {!file ? (
           <div className="mt-[20vh] text-center text-dim">Вибери лог зліва — стрічка оновлюється сама</div>
         ) : (
           <>
-            {compact && tail.hasMore ? (
+            {compact && canRevealOlder ? (
               <button
                 className="mb-2 flex w-full items-center justify-center gap-1.5 rounded-[8px] border border-dashed border-line bg-bg px-2 py-1 text-[11px] font-semibold text-dim hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-                onClick={() => onSelect(file)}
+                disabled={tail.loadingOlder}
+                onClick={revealOlder}
               >
-                ⤴ показано хвіст — відкрити повністю
+                {tail.loadingOlder ? "завантаження…" : "⤴ показати раніше"}
               </button>
             ) : null}
             {!compact && canRevealOlder && feed.items.length ? (
@@ -140,8 +220,10 @@ export function LogFeed({ file, files, onSelect, showSvc, lineFilter, onStatus, 
                   <FeedItem key={idx + feed.items.length - visibleItems.length} item={item} />
                 ))}
                 {file.activity === "live" ? <WorkingRow label={workingLabel} /> : null}
-                {file.activity === "recent" && !isAuxTask(file) ? (
+                {file.activity === "recent" && isAwaitingUser(file) ? (
                   <div className="mt-2 text-[11.5px] font-semibold text-[#b8860b]">закінчив хід — чекає відповіді</div>
+                ) : file.activity === "recent" && isSubagent(file) && file.proc !== "running" ? (
+                  <div className="mt-2 text-[11.5px] font-semibold text-dim">⤷ повернувся з результатом</div>
                 ) : null}
               </>
             ) : (
@@ -167,6 +249,7 @@ export function LogFeed({ file, files, onSelect, showSvc, lineFilter, onStatus, 
             )}
           </>
         )}
+        </div>
       </div>
     </div>
   );

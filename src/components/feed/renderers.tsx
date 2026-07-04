@@ -1,13 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import type { ReactNode } from "react";
 
 import type { FileEntry } from "@/lib/types";
 
-import { hhmm } from "../utils";
+import { hhmm, ukPlural } from "../utils";
+import { Lightbox } from "./Lightbox";
 
-type Call = { cmd: string; output: string; status: "run" | "ok" | "err"; label: string; icon: string; open: boolean };
+type Call = { cmd: string; display: string; output: string; status: "run" | "ok" | "err"; label: string; icon: string; open: boolean };
 type ReviewSeverity = "Critical" | "High" | "Medium" | "Low" | "Info" | "P0" | "P1" | "P2" | "P3";
 type ReviewFinding = {
   severity: ReviewSeverity;
@@ -48,12 +49,24 @@ type Tmsg = {
   delivery?: "ok" | "err";
   msgId?: string;
 };
+type CmdGroupItem = {
+  kind: "cmd-group";
+  ids: string[];
+  calls: Call[];
+  t0: unknown;
+  t1: unknown;
+  byTool: Record<string, number>;
+  okCount: number;
+  errCount: number;
+  hasErr: boolean;
+};
 type Item =
   | { kind: "prose"; ts: unknown; text: string; engine: "codex" | "claude" }
   | { kind: "user"; ts: unknown; text: string }
   | { kind: "svc"; text: string }
   | { kind: "note"; text: string }
-  | { kind: "cmd"; id: string; call: Call }
+  | { kind: "cmd"; id: string; call: Call; ts: unknown }
+  | CmdGroupItem
   | { kind: "edit"; files: string }
   | ReviewCardItem
   | MemCitationItem
@@ -62,20 +75,29 @@ type Item =
   | { kind: "think"; text: string }
   | { kind: "image"; media: string; data: string; w?: number; h?: number; bytes?: number }
   | { kind: "blob"; bytes: number; text: string }
+  | { kind: "sysmsg"; label: string; text: string }
   | { kind: "raw"; text: string; err: boolean };
 
 const BLOB_MIN = 20_000;
 const BLOB_KEEP = 200_000;
 const RAW_DEBUG_KEEP = 24_000;
 const MEM_CITATION_RE = /<oai-mem-citation>\s*<citation_entries>([\s\S]*?)<\/citation_entries>\s*<rollout_ids>([\s\S]*?)<\/rollout_ids>\s*<\/oai-mem-citation>/g;
-const VERDICT_RE = /\b(REQUEST_CHANGES|APPROVE|COMMENT)\b/;
-const FINDING_RE =
-  /^\s*(?:[-*]\s*)?(?:(?:\[(P[0-3])\])|(Critical|High|Medium|Low|Info|P[0-3]))\s*(?:[–—:-]\s*)?(.+)$/i;
+const VERDICT_LINE_RE = /^\s*(REQUEST_CHANGES|APPROVE|COMMENT)\b/m;
+/* Paths that live under a viewer transcript root can deep-link to that file;
+   source-tree paths in a finding stay plain code chips. Mirrors ROOTS. */
+const TRANSCRIPT_PATH_RE = /(?:\/\.codex\/sessions\/|\/\.claude\/projects\/|\/\.claude\/plugins\/data\/codex-openai-codex\/state\/|^\/tmp\/claude-\d+\/)/;
+/* Codex findings are a numbered list; the severity sits inline after the file
+   ref (e.g. "1. [file](path:line) - Medium - …" or "1. `path:line` - Critical. …"),
+   not at the start of the line, so match the item marker and scan for severity. */
+const FINDING_ITEM_RE = /^\s*(\d+)[.)]\s+(.*)$/;
+const SEVERITY_RE = /(?:\[(P[0-3])\]|\b(Critical|High|Medium|Low|Info|P[0-3])\b)/i;
 const PATH_RE =
   /((?:\.{1,2}\/|\/|~\/)?[\w@.+-][\w@.+\-/]*\.(?:tsx?|jsx?|mjs|cjs|mts|cts|py|go|rs|md|json|ya?ml|toml|css|scss|html|sql|sh|env|ftl|txt))(?::(\d+))?/i;
 const MARKDOWN_LINK_RE = /\[([^\]]+)\]\(([^)\s]+)\)/;
+/* The optional [\w.-]* prefix catches env-style names (DB_PASSWORD, GITHUB_TOKEN);
+   the trailing \b keeps non-secret counters like max_tokens untouched. */
 const SECRET_VALUE_RE =
-  /\b(api[_-]?key|access[_-]?token|refresh[_-]?token|authorization|bearer|secret|password|passwd|pwd)\b(\s*[:=]\s*)(["']?)[^\s"',}]+/gi;
+  /([\w.-]*(?:api[_-]?key|access[_-]?token|refresh[_-]?token|authorization|bearer|secret|password|passwd|pwd|token))\b(\s*[:=]\s*)(["']?)[^\s"',}]+/gi;
 
 /* A near-whitespace-free run this large is base64/binary:
    render it as a compact chip to keep the feed readable. */
@@ -89,7 +111,21 @@ function num(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
-const TMSG_RE = /<teammate-message\b([^>]*)>([\s\S]*?)<\/teammate-message>/g;
+/* Both inter-agent envelopes card-ify the same way: <teammate-message …> and
+   <agent-message from="…"> carry the sender in different attribute names. */
+const TMSG_RE = /<(teammate-message|agent-message)\b([^>]*)>([\s\S]*?)<\/\1>/g;
+
+/* Harness-injected turns (system prompts, reminders, command wrappers, hook
+   output) arrive as "user" records but the user never typed them; they fold
+   into a collapsed system row so real messages stand out. */
+const SYS_MSG_RE = /^\s*(?:<[a-zA-Z][\w:-]*|Caveat: The messages below|\[Request interrupted|This came from another Claude session)/;
+
+function sysMsgLabel(text: string): string {
+  const tag = text.match(/^\s*<([a-zA-Z][\w:-]*)/)?.[1];
+  if (tag) return tag;
+  if (/^\s*Caveat:/.test(text)) return "caveat";
+  return "системне";
+}
 
 function tmsgAttr(attrs: string, name: string): string {
   return attrs.match(new RegExp(`${name}="([^"]*)"`))?.[1] ?? "";
@@ -107,19 +143,86 @@ function arr(value: unknown): Record<string, unknown>[] {
   return Array.isArray(value) ? value.filter((x): x is Record<string, unknown> => x && typeof x === "object" && !Array.isArray(x)) : [];
 }
 
+const MD_INLINE_RE = /(`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\([^)\s]+\)|https?:\/\/[^\s<>"')\]]+)/g;
+
+function Anchor({ href, label }: { href: string; label: string }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      title={href}
+      className="break-all text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent"
+    >
+      {label}
+    </a>
+  );
+}
+
 function md(text: string): ReactNode {
-  const parts = text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g);
+  const parts = text.split(MD_INLINE_RE);
   return parts.map((part, i) => {
+    if (!part) return null;
     if (part.startsWith("`") && part.endsWith("`")) {
       return <span key={i} className="rounded-md bg-chip px-1.5 py-0.5 font-mono">{part.slice(1, -1)}</span>;
     }
     if (part.startsWith("**") && part.endsWith("**")) return <b key={i}>{part.slice(2, -2)}</b>;
+    const linked = part.match(/^\[([^\]]+)\]\(([^)\s]+)\)$/);
+    if (linked) {
+      const href = linked[2].replace(/\\([()])/g, "$1");
+      if (/^https?:\/\//.test(href)) return <Anchor key={i} href={href} label={linked[1]} />;
+      return <span key={i} className="rounded-md bg-chip px-1.5 py-0.5 font-mono">{linked[1]}</span>;
+    }
+    if (/^https?:\/\//.test(part)) {
+      /* Bare URLs in prose often carry sentence punctuation; keep it as text. */
+      const href = part.replace(/[.,;:!?…»)]+$/, "");
+      const tail = part.slice(href.length);
+      const label = href.length > 72 ? href.slice(0, 69) + "…" : href;
+      return (
+        <span key={i}>
+          <Anchor href={href} label={label} />
+          {tail}
+        </span>
+      );
+    }
     return part;
   });
 }
 
+/* Block-level pass for whole prose messages rendered inside whitespace-pre-wrap:
+   newlines survive as text, so headings and table rows are styled inline per line. */
+function mdBlocks(text: string): ReactNode {
+  const segments = text.split(/(\n)/);
+  return segments.map((seg, i) => {
+    if (seg === "\n" || seg === "") return seg;
+    const heading = seg.match(/^#{1,6}\s+(.*)$/);
+    if (heading) {
+      return (
+        <span key={i} className="text-[14px] font-bold">
+          {md(heading[1])}
+        </span>
+      );
+    }
+    if (/^\s*\|.*\|\s*$/.test(seg)) {
+      return (
+        <span key={i} className="font-mono text-[12px]">
+          {seg}
+        </span>
+      );
+    }
+    return <Fragment key={i}>{md(seg)}</Fragment>;
+  });
+}
+
+/* Applied to tool output, command lines, blobs, and raw log rows before render.
+   Message prose stays unredacted: false positives in narration are costly for
+   readability, and secrets do not appear in prose. */
+function redactSecrets(text: string): string {
+  return text.replace(SECRET_VALUE_RE, (_whole, key: string, sep: string, quote: string) => `${key}${sep}${quote}[redacted]`);
+}
+
 function debugRaw(text: string): { raw: string; truncated: boolean } {
-  const redacted = text.replace(SECRET_VALUE_RE, (_whole, key: string, sep: string, quote: string) => `${key}${sep}${quote}[redacted]`);
+  const redacted = redactSecrets(text);
   return { raw: redacted.slice(0, RAW_DEBUG_KEEP), truncated: redacted.length > RAW_DEBUG_KEEP };
 }
 
@@ -153,51 +256,73 @@ function parseLinkedTarget(text: string): { file?: string; line?: number } {
   return { file: plain[1], line: Number.isFinite(line) ? line : undefined };
 }
 
-function plainTextTitle(text: string): string {
+/* Drop the file refs and the leading severity marker, keeping the human sentence
+   as a compact title. The full text stays available in the finding body. */
+function findingTitle(body: string): string {
+  let text = body;
+  const sev = text.match(SEVERITY_RE);
+  if (sev && sev.index !== undefined) {
+    const after = text.slice(sev.index + sev[0].length).replace(/^[\s.:–—-]+/, "");
+    if (after) text = after;
+  }
   return text
     .replace(MARKDOWN_LINK_RE, "$1")
-    .replace(PATH_RE, "")
-    .replace(/^[\s:–—-]+/, "")
+    .replace(/`([^`]*)`/g, "$1")
     .replace(/\s+/g, " ")
     .trim()
-    .slice(0, 180);
+    .slice(0, 200);
+}
+
+function makeFinding(body: string): ReviewFinding {
+  const severity = normalizeSeverity(body.match(SEVERITY_RE)?.[1] ?? body.match(SEVERITY_RE)?.[2] ?? "Info");
+  const target = parseLinkedTarget(body);
+  const title = findingTitle(body) || body.slice(0, 200) || "Finding";
+  return { severity, file: target.file, line: target.line, title, body: debugRaw(body).raw };
 }
 
 function parseReview(text: string, ts: unknown): ReviewCardItem | null {
-  const verdict = text.match(VERDICT_RE)?.[1] as ReviewCardItem["verdict"] | undefined;
+  const verdict = text.match(VERDICT_LINE_RE)?.[1] as ReviewCardItem["verdict"] | undefined;
+  /* A review card requires an explicit verdict line: numbered lists that merely
+     mention P1/P2 (spec item ids, work summaries) stay plain prose. */
+  if (!verdict) return null;
   const findings: ReviewFinding[] = [];
   const summary: string[] = [];
-  let current: ReviewFinding | null = null;
+  let buffer: string | null = null;
+  const flush = () => {
+    const body = buffer?.trim();
+    if (body) findings.push(makeFinding(body));
+    buffer = null;
+  };
 
   for (const rawLine of text.split("\n")) {
     const line = rawLine.trimEnd();
-    const match = line.match(FINDING_RE);
-    if (match) {
-      const severity = normalizeSeverity(match[1] || match[2] || "Info");
-      const body = (match[3] ?? "").trim();
-      const target = parseLinkedTarget(body);
-      const title = plainTextTitle(body) || body.slice(0, 180) || "Finding";
-      current = { severity, file: target.file, line: target.line, title, body: debugRaw(body).raw };
-      findings.push(current);
+    const item = line.match(FINDING_ITEM_RE);
+    if (item) {
+      flush();
+      buffer = item[2] ?? "";
       continue;
     }
     const trimmed = line.trim();
-    if (current && /^\s{2,}\S/.test(rawLine)) {
-      current.body = `${current.body}\n${debugRaw(trimmed).raw}`.trim();
+    if (buffer !== null) {
+      if (trimmed) buffer = `${buffer}\n${trimmed}`;
+      else flush();
       continue;
     }
-    current = null;
-    if (!trimmed || VERDICT_RE.test(trimmed) || /^(findings?|summary|open questions?|tests?|residual risk)\s*:?\s*$/i.test(trimmed)) {
+    if (!trimmed || VERDICT_LINE_RE.test(line) || /^(findings?|summary|open questions?|tests?|residual risk)\s*:?\s*$/i.test(trimmed)) {
       continue;
     }
     if (findings.length === 0 && summary.length < 3 && trimmed.length <= 240) summary.push(trimmed);
   }
+  flush();
 
+  /* Require real severity markers so a plain numbered list in chat text does not
+     masquerade as a review card. */
+  const severe = findings.filter((finding) => SEVERITY_RE.test(finding.body)).length;
   const reviewish =
     Boolean(verdict) ||
     /^findings?\s*:?$/im.test(text) ||
-    findings.length >= 2 ||
-    (findings.length === 1 && /\b(review|findings?|request_changes|approve|comment)\b/i.test(text));
+    severe >= 2 ||
+    (severe >= 1 && /\b(review|request_changes|approve|comment)\b/i.test(text));
   if (!reviewish) return null;
   return { kind: "review", ts, verdict, findings, summary, raw: debugRaw(text).raw };
 }
@@ -221,8 +346,35 @@ function parseMemCitation(matchText: string, entriesText: string, idsText: strin
   return { kind: "mem-citation", entries, rolloutIds, raw: raw.raw, truncated: raw.truncated };
 }
 
+/* Strips visual boilerplate from a cmd chip caption only; `call.cmd` (the raw
+   text used in the expanded <pre>) is left untouched. A tool-name prefix like
+   "Bash: " (added by renderClaude) is preserved across the cleanup passes. */
+function displayCmd(cmd: string): string {
+  const prefixMatch = cmd.match(/^([A-Za-z][\w.]*): /);
+  const prefix = prefixMatch ? prefixMatch[0] : "";
+  let body = prefix ? cmd.slice(prefix.length) : cmd;
+  let prev: string;
+  do {
+    prev = body;
+    body = body.replace(/^export PATH=[^;]+;\s*/, "");
+    body = body.replace(/^cd\s+\S+\s*&&\s*/, "");
+    body = body.replace(/^\/usr\/bin\/zsh -lc\s+/, "");
+    // Only an outer quote pair that fully wraps the command is boilerplate;
+    // an unescaped occurrence of the same quote inside (e.g. 'a' && 'b') means
+    // the leading/trailing quotes belong to separate tokens, so leave it as is.
+    body = body.replace(/^(["'])([\s\S]*)\1$/, (whole: string, quote: string, inner: string) =>
+      new RegExp(`(?<!\\\\)${quote}`).test(inner) ? whole : inner,
+    );
+  } while (body !== prev);
+  const heredoc = body.match(/^([\w./-]+(?:\s+-)?)\s*<<\s*['"]?(\w+)['"]?/);
+  if (heredoc) body = `${heredoc[1].trim()} «heredoc»`;
+  body = body.replace(/\s+/g, " ").trim();
+  return (prefix + body).slice(0, 160);
+}
+
 function newCmd(cmd: string, icon = "❯"): Call {
-  return { cmd, icon, output: "", status: "run", label: "виконується…", open: false };
+  const redacted = redactSecrets(cmd);
+  return { cmd: redacted, display: displayCmd(redacted), icon, output: "", status: "run", label: "виконується…", open: false };
 }
 
 function attach(call: Call | undefined, output: string, errFlag?: boolean) {
@@ -239,9 +391,71 @@ function attach(call: Call | undefined, output: string, errFlag?: boolean) {
   call.open ||= isErr;
   if (body) {
     const limit = isErr ? 60_000 : 12_000;
-    call.output = (call.output + "\n" + body).trim().slice(-limit);
+    call.output = (call.output + "\n" + redactSecrets(body)).trim().slice(-limit);
   }
   return call;
+}
+
+const CMD_GROUP_MIN = 4;
+
+/* First word of the tool-name prefix ("Bash: ls" → "Bash"); Codex shell/exec
+   calls carry no prefix and bucket under a generic label. */
+function toolNameOf(cmd: string): string {
+  return cmd.match(/^([A-Za-z][\w.]*): /)?.[1] ?? "cmd";
+}
+
+/* Collapses runs of >=4 consecutive cmd items into one cmd-group item so a
+   long unbroken command series reads as a single summary line. "think" items
+   inside a run don't break it (and are absorbed into the group, since they
+   carry no signal once the run they annotate is folded); prose/user/tmsg/
+   edit/review/image do break it. The last run of a live transcript is never
+   folded, so the currently running call always stays visible. */
+function groupCmdRuns(items: Item[], isLive: boolean): Item[] {
+  const out: Item[] = [];
+  let i = 0;
+  while (i < items.length) {
+    if (items[i].kind !== "cmd") {
+      out.push(items[i]);
+      i += 1;
+      continue;
+    }
+    let j = i;
+    const cmdItems: Extract<Item, { kind: "cmd" }>[] = [];
+    while (j < items.length) {
+      const cur = items[j];
+      if (cur.kind === "cmd") cmdItems.push(cur);
+      else if (cur.kind !== "think") break;
+      j += 1;
+    }
+    const isLastRun = j === items.length;
+    if (cmdItems.length >= CMD_GROUP_MIN && !(isLive && isLastRun)) {
+      const byTool: Record<string, number> = {};
+      let okCount = 0;
+      let errCount = 0;
+      for (const it of cmdItems) {
+        const tool = toolNameOf(it.call.cmd);
+        byTool[tool] = (byTool[tool] ?? 0) + 1;
+        if (it.call.status === "ok") okCount += 1;
+        else if (it.call.status === "err") errCount += 1;
+      }
+      out.push({
+        kind: "cmd-group",
+        ids: cmdItems.map((it) => it.id),
+        calls: cmdItems.map((it) => it.call),
+        t0: cmdItems[0]?.ts,
+        t1: cmdItems.at(-1)?.ts,
+        byTool,
+        okCount,
+        errCount,
+        hasErr: errCount > 0,
+      });
+      i = j;
+    } else {
+      out.push(items[i]);
+      i += 1;
+    }
+  }
+  return out;
 }
 
 export function buildFeed(file: FileEntry, lines: string[], showSvc: boolean, lineFilter: string) {
@@ -252,7 +466,7 @@ export function buildFeed(file: FileEntry, lines: string[], showSvc: boolean, li
   let lastProse = "";
   const pushBlobIfHuge = (text: string): boolean => {
     if (!looksLikeBlob(text)) return false;
-    items.push({ kind: "blob", bytes: text.length, text: text.slice(0, BLOB_KEEP) });
+    items.push({ kind: "blob", bytes: text.length, text: redactSecrets(text).slice(0, BLOB_KEEP) });
     return true;
   };
   const pushImage = (block: Record<string, unknown>, fileWrap: Record<string, unknown>) => {
@@ -271,15 +485,21 @@ export function buildFeed(file: FileEntry, lines: string[], showSvc: boolean, li
       bytes: num(fileWrap.originalSize),
     });
   };
-  const pushStructuredCodex = (ts: unknown, text: string) => {
-    if (!MEM_CITATION_RE.test(text)) {
-      MEM_CITATION_RE.lastIndex = 0;
+  /* Recognises a Codex review verdict/findings block and any <oai-mem-citation>
+     block inside `text`, rendering them as structured cards. Runs for both the
+     codex feed and quoted review text inside a claude transcript. Non-structured
+     segments are handed back through `fallback` so callers keep their own bubble
+     style (prose vs user). Returns true when at least one card was produced. */
+  const pushStructured = (ts: unknown, text: string, fallback: (segment: string) => void): boolean => {
+    MEM_CITATION_RE.lastIndex = 0;
+    const hasCitation = MEM_CITATION_RE.test(text);
+    MEM_CITATION_RE.lastIndex = 0;
+    if (!hasCitation) {
       const review = parseReview(text.trim(), ts);
       if (!review) return false;
       items.push(review);
       return true;
     }
-    MEM_CITATION_RE.lastIndex = 0;
     let handled = false;
     let last = 0;
     const pushTextPart = (part: string) => {
@@ -290,11 +510,9 @@ export function buildFeed(file: FileEntry, lines: string[], showSvc: boolean, li
         items.push(review);
         handled = true;
       } else {
-        items.push({ kind: "prose", ts, text: trimmed, engine: "codex" });
+        fallback(trimmed);
       }
     };
-
-    MEM_CITATION_RE.lastIndex = 0;
     for (const match of text.matchAll(MEM_CITATION_RE)) {
       const whole = match[0];
       const index = match.index ?? 0;
@@ -306,18 +524,32 @@ export function buildFeed(file: FileEntry, lines: string[], showSvc: boolean, li
     pushTextPart(text.slice(last));
     return handled;
   };
+  /* Teammate message bodies can quote <oai-mem-citation> XML; keep the card body
+     clean and render the citations as their own chips right after it. */
+  const splitCitations = (text: string): { cleaned: string; cites: MemCitationItem[] } => {
+    const cites: MemCitationItem[] = [];
+    MEM_CITATION_RE.lastIndex = 0;
+    const cleaned = text
+      .replace(MEM_CITATION_RE, (whole, entries: string, ids: string) => {
+        cites.push(parseMemCitation(whole, entries, ids));
+        return "";
+      })
+      .trim();
+    return { cleaned, cites };
+  };
   const addProse = (ts: unknown, text: string) => {
     if (!text.trim() || text === lastProse) return;
     lastProse = text;
     if (pushBlobIfHuge(text)) return;
-    if (file.engine === "codex" && pushStructuredCodex(ts, text)) return;
-    items.push({ kind: "prose", ts, text, engine: file.engine === "codex" ? "codex" : "claude" });
+    const engine = file.engine === "codex" ? "codex" : "claude";
+    if (pushStructured(ts, text, (segment) => items.push({ kind: "prose", ts, text: segment, engine }))) return;
+    items.push({ kind: "prose", ts, text, engine });
   };
   const addCmd = (ts: unknown, cmd: string, callId?: string, icon?: string) => {
     const id = callId || "plain-" + items.length + "-" + String(ts ?? "");
     const call = newCmd(cmd, icon);
     calls.set(id, call);
-    items.push({ kind: "cmd", id, call });
+    items.push({ kind: "cmd", id, call, ts });
     return call;
   };
   const addOutput = (callId: string | undefined, output: string, err?: boolean) => {
@@ -330,7 +562,7 @@ export function buildFeed(file: FileEntry, lines: string[], showSvc: boolean, li
       return;
     }
     const call = attach(calls.get(callId), output, err);
-    if (!call && output && showSvc) items.push({ kind: "svc", text: "output: " + output.slice(0, 200) });
+    if (!call && output && showSvc) items.push({ kind: "svc", text: "output: " + redactSecrets(output).slice(0, 200) });
   };
   const addSvc = (text: string) => {
     if (showSvc) items.push({ kind: "svc", text: text.slice(0, 300) });
@@ -342,8 +574,8 @@ export function buildFeed(file: FileEntry, lines: string[], showSvc: boolean, li
   /* Inbound teammate traffic arrives as user text wrapped in <teammate-message>;
      idle_notification JSON bodies collapse to a thin service-style row. */
   const addUserText = (ts: unknown, text: string) => {
-    const rest = text.replace(TMSG_RE, (_whole, attrs: string, body: string) => {
-      const peer = tmsgAttr(attrs, "teammate_id") || "тімейт";
+    const rest = text.replace(TMSG_RE, (_whole, _tag: string, attrs: string, body: string) => {
+      const peer = tmsgAttr(attrs, "teammate_id") || tmsgAttr(attrs, "from") || "тімейт";
       const summary = tmsgAttr(attrs, "summary");
       const trimmed = body.trim();
       if (trimmed.startsWith("{")) {
@@ -358,11 +590,21 @@ export function buildFeed(file: FileEntry, lines: string[], showSvc: boolean, li
           /* render as a regular teammate card */
         }
       }
-      items.push({ kind: "tmsg", ts, dir: "in", peer, summary, text: trimmed });
+      const { cleaned, cites } = splitCitations(trimmed);
+      /* A body that opens with the verdict IS a review: keep the envelope and
+         render the content as a review card. The strict start anchor keeps task
+         briefs that merely mention APPROVE/REQUEST_CHANGES as plain text. */
+      const review = /^(REQUEST_CHANGES|APPROVE|COMMENT)\b/.test(cleaned) ? parseReview(cleaned, ts) : null;
+      items.push({ kind: "tmsg", ts, dir: "in", peer, summary, text: review ? "" : cleaned });
+      if (review) items.push(review);
+      for (const cite of cites) items.push(cite);
       return "";
     });
     const leftover = rest.replace(/Another Claude session sent a message:\s*/g, "").trim();
-    if (leftover && !pushBlobIfHuge(leftover)) items.push({ kind: "user", ts, text: leftover });
+    if (!leftover || pushBlobIfHuge(leftover)) return;
+    if (SYS_MSG_RE.test(leftover)) return void items.push({ kind: "sysmsg", label: sysMsgLabel(leftover), text: leftover });
+    if (pushStructured(ts, leftover, (segment) => items.push({ kind: "user", ts, text: segment }))) return;
+    items.push({ kind: "user", ts, text: leftover });
   };
   const renderCodex = (obj: Record<string, unknown>) => {
     const p = rec(obj.payload);
@@ -372,7 +614,11 @@ export function buildFeed(file: FileEntry, lines: string[], showSvc: boolean, li
     }
     if (obj.type === "event_msg") {
       if (p.type === "agent_message" && p.message) return addProse(ts, textPart(p.message));
-      if (p.type === "user_message" && p.message) return items.push({ kind: "user", ts, text: textPart(p.message) });
+      if (p.type === "user_message" && p.message) {
+        const text = textPart(p.message);
+        if (SYS_MSG_RE.test(text)) return items.push({ kind: "sysmsg", label: sysMsgLabel(text), text });
+        return items.push({ kind: "user", ts, text });
+      }
       if (p.type === "task_started") return addNote("Задача стартувала" + (ts ? " · " + hhmm(ts) : ""));
       if (p.type === "task_complete") return addNote("Задачу завершено" + (ts ? " · " + hhmm(ts) : ""));
       return addSvc(textPart(p.type) || "event");
@@ -381,7 +627,9 @@ export function buildFeed(file: FileEntry, lines: string[], showSvc: boolean, li
       if (p.type === "message") {
         const text = arr(p.content).map((c) => textPart(c.text) || textPart(c.input_text)).join(" ").trim();
         if (!text) return addSvc("message " + textPart(p.role));
-        return p.role === "user" ? items.push({ kind: "user", ts, text }) : addProse(ts, text);
+        if (p.role !== "user") return addProse(ts, text);
+        if (SYS_MSG_RE.test(text)) return items.push({ kind: "sysmsg", label: sysMsgLabel(text), text });
+        return items.push({ kind: "user", ts, text });
       }
       if (p.type === "function_call") {
         let args: Record<string, unknown> = {};
@@ -404,6 +652,15 @@ export function buildFeed(file: FileEntry, lines: string[], showSvc: boolean, li
         return addCmd(ts, name + " " + JSON.stringify(args).slice(0, 120), textPart(p.call_id), "🔧");
       }
       if (p.type === "function_call_output") return addOutput(textPart(p.call_id), typeof p.output === "string" ? p.output : JSON.stringify(p.output ?? ""));
+      /* Fresh rollouts wrap apply_patch as a "custom_tool_call": `input` is the
+         raw patch text directly (unlike function_call, whose `arguments` is a
+         JSON-encoded string), so no JSON.parse step is needed here. */
+      if (p.type === "custom_tool_call" && textPart(p.name) === "apply_patch") {
+        const files = textPart(p.input).match(/(Add|Update|Delete) File: [^\n]+/g);
+        items.push({ kind: "edit", files: files ? files.join(", ").replace(/(Add|Update|Delete) File: /g, "") : "патч" });
+        return;
+      }
+      if (p.type === "custom_tool_call_output") return addOutput(textPart(p.call_id), typeof p.output === "string" ? p.output : JSON.stringify(p.output ?? ""));
       if (p.type === "reasoning") return addSvc("reasoning");
       return addSvc(textPart(p.type) || "item");
     }
@@ -443,15 +700,19 @@ export function buildFeed(file: FileEntry, lines: string[], showSvc: boolean, li
           const input = rec(part.input);
           const message = input.message;
           if (typeof message === "string") {
+            const { cleaned, cites } = splitCitations(message);
+            const review = /^(REQUEST_CHANGES|APPROVE|COMMENT)\b/.test(cleaned) ? parseReview(cleaned, ts) : null;
             const item: Tmsg = {
               kind: "tmsg",
               ts,
               dir: "out",
               peer: String(input.to ?? ""),
               summary: String(input.summary ?? ""),
-              text: message,
+              text: review ? "" : cleaned,
             };
             items.push(item);
+            if (review) items.push(review);
+            for (const cite of cites) items.push(cite);
             if (textPart(part.id)) tmsgs.set(textPart(part.id), item);
           } else {
             addSvc(`SendMessage → ${String(input.to ?? "")} · ${textPart(rec(message).type) || "протокол"}`);
@@ -466,14 +727,42 @@ export function buildFeed(file: FileEntry, lines: string[], showSvc: boolean, li
     }
     addSvc(textPart(obj.type) || "запис");
   };
+  /* Job .output logs echo the final review/citation block as bare lines after the
+     [codex] stream ends; collect that run so it renders as one structured card
+     instead of per-line raw rows. Falls back to the old raw rows when the block
+     turns out not to be structured. */
+  let plainBlock: string[] | null = null;
+  const flushPlainBlock = () => {
+    if (!plainBlock) return;
+    const text = plainBlock.join("\n").trim();
+    plainBlock = null;
+    if (!text) return;
+    const pushRawLines = (segment: string) => {
+      for (const raw of segment.split("\n")) {
+        if (raw.trim()) items.push({ kind: "raw", text: redactSecrets(raw), err: /error|failed|traceback|exception/i.test(raw) });
+      }
+    };
+    if (!pushStructured(null, text, pushRawLines)) pushRawLines(text);
+  };
   const renderPlain = (rawLine: string) => {
     // Shell .output files carry terminal ANSI/OSC escapes; strip them for display.
     const line = rawLine.replace(/\x1b\][^\x07]*(\x07|\x1b\\)/g, "").replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "");
+    if (plainBlock) {
+      if (/^\[codex\]/.test(line)) flushPlainBlock();
+      else {
+        plainBlock.push(line);
+        return;
+      }
+    }
     if (/Assistant message$/.test(line)) return;
     const m = line.match(/^\[([^\]]+)\]\s*(.*)$/);
     const ts = m?.[1] ?? null;
     const rest = m?.[2] ?? line;
     if (!rest || /^Assistant message captured/.test(rest)) return;
+    if (!m && (VERDICT_LINE_RE.test(line) || line.startsWith("<oai-mem-citation>"))) {
+      plainBlock = [line];
+      return;
+    }
     if (/^Running command: /.test(rest)) return addCmd(ts, rest.replace(/^Running command: /, "").replace(/^\/usr\/bin\/zsh -lc /, ""));
     if (/^Command (completed|failed)/.test(rest)) {
       const last = [...calls.values()].at(-1);
@@ -485,7 +774,7 @@ export function buildFeed(file: FileEntry, lines: string[], showSvc: boolean, li
     if (/^Applying \d+ file/.test(rest)) return items.push({ kind: "edit", files: rest });
     if (m && !/^(Running|Command|Applying)/.test(rest)) return addProse(ts, rest);
     if (pushBlobIfHuge(line)) return;
-    items.push({ kind: "raw", text: line, err: /error|failed|traceback|exception/i.test(line) });
+    items.push({ kind: "raw", text: redactSecrets(line), err: /error|failed|traceback|exception/i.test(line) });
   };
   for (const line of lines) {
     if (lineFilter && !line.toLowerCase().includes(lineFilter)) continue;
@@ -501,13 +790,15 @@ export function buildFeed(file: FileEntry, lines: string[], showSvc: boolean, li
       }
     } else renderPlain(line);
   }
-  return { items, hiddenServiceCount };
+  flushPlainBlock();
+  return { items: groupCmdRuns(items, file.activity === "live"), hiddenServiceCount };
 }
 
 type ImageView = "chip" | "thumb" | "full";
 
 export function ImageCard({ media, data, w, h, bytes }: { media: string; data: string; w?: number; h?: number; bytes?: number }) {
-  const [view, setView] = useState<ImageView>("chip");
+  /* Screenshots carry the story of an agent run, so they open as thumbnails right away. */
+  const [view, setView] = useState<ImageView>("thumb");
   const kb = Math.round((bytes ?? (data.length * 3) / 4) / 1024);
   const dims = w && h ? `${w}×${h}` : "зображення";
   if (view === "chip") {
@@ -524,21 +815,43 @@ export function ImageCard({ media, data, w, h, bytes }: { media: string; data: s
       </button>
     );
   }
-  const full = view === "full";
+  const src = `data:${media};base64,${data}`;
   return (
     <div className="my-2 ml-9">
       {/* Lazy insert: the data URI only enters the DOM once expanded. next/image cannot serve a base64 data URI here. */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
-        src={`data:${media};base64,${data}`}
+        src={src}
         alt={`зображення ${dims}`}
-        onClick={() => setView(full ? "chip" : "full")}
-        className={`cursor-pointer rounded-[14px] border border-line ${full ? "max-w-full" : "max-h-[240px]"}`}
+        onClick={() => setView("full")}
+        className="max-h-[240px] cursor-zoom-in rounded-[14px] border border-line"
       />
       <button type="button" onClick={() => setView("chip")} className="mt-1 block text-[12px] text-dim">
         згорнути
       </button>
+      {view === "full" ? (
+        <Lightbox src={src} alt={`зображення ${dims}`} caption={`${dims} · ${kb} КБ`} onClose={() => setView("thumb")} />
+      ) : null}
     </div>
+  );
+}
+
+/** Harness/system turn folded into a thin expandable row: label + size, full text on demand. */
+export function SysMsgCard({ label, text }: { label: string; text: string }) {
+  const kb = text.length >= 2048 ? `${(text.length / 1024).toFixed(1)} кБ` : `${text.length} симв.`;
+  return (
+    <details className="group my-1.5 ml-9">
+      <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[11px] font-semibold text-dim hover:text-ink [&::-webkit-details-marker]:hidden">
+        <span className="flex h-4.5 w-4.5 items-center justify-center rounded-md bg-chip text-[10px]">⚙</span>
+        <span className="rounded-full bg-chip px-1.5 py-0.5 font-mono text-[9.5px]">{label}</span>
+        <span>системне · {kb}</span>
+        <span className="text-accent group-open:hidden">показати</span>
+        <span className="hidden text-dim group-open:inline">згорнути</span>
+      </summary>
+      <pre className="mt-1 max-h-[320px] overflow-auto whitespace-pre-wrap break-words rounded-[10px] border border-line bg-bg px-3 py-2 font-mono text-[11px] text-[#555]">
+        {text}
+      </pre>
+    </details>
   );
 }
 
@@ -583,16 +896,83 @@ function verdictClass(verdict: ReviewCardItem["verdict"]): string {
   return "bg-chip text-[#555] border-line";
 }
 
+function verdictLabel(verdict: ReviewCardItem["verdict"]): string {
+  if (verdict === "REQUEST_CHANGES") return "⛔ REQUEST_CHANGES";
+  if (verdict === "APPROVE") return "✅ APPROVE";
+  return "💬 COMMENT";
+}
+
+function FileRef({ file, line }: { file: string; line?: number }) {
+  const label = line ? `${file}:${line}` : file;
+  const cls = "inline-block min-w-0 max-w-full truncate rounded-md bg-chip px-1.5 py-0.5 align-bottom font-mono text-[11.5px]";
+  if (TRANSCRIPT_PATH_RE.test(file)) {
+    return (
+      <a href={`#f=${encodeURIComponent(file)}`} className={`${cls} text-accent underline decoration-dotted`} title={label}>
+        {label}
+      </a>
+    );
+  }
+  return (
+    <code className={cls} title={label}>
+      {label}
+    </code>
+  );
+}
+
+function CmdGroupCard({ item }: { item: CmdGroupItem }) {
+  const tools = Object.entries(item.byTool)
+    .map(([tool, count]) => `${tool} ×${count}`)
+    .join(" · ");
+  const t0 = hhmm(item.t0);
+  const t1 = hhmm(item.t1);
+  const range = t0 && t1 && t0 !== t1 ? `${t0}–${t1}` : t0 || t1;
+  return (
+    <details
+      className={`my-2.5 ml-9 overflow-hidden rounded-[14px] border shadow-card ${item.hasErr ? "border-err/35 bg-[#fff4f4]" : "border-line bg-panel"}`}
+      open={item.hasErr}
+    >
+      <summary className="flex cursor-pointer list-none items-center gap-2.5 px-3.5 py-2">
+        <span className="flex h-6.5 w-6.5 shrink-0 items-center justify-center rounded-lg bg-chip text-[13px]">⚙</span>
+        <span className="min-w-0 flex-1 truncate text-[12.5px]">
+          {item.calls.length} {ukPlural(item.calls.length, "команда", "команди", "команд")}
+          {tools ? " · " + tools : ""} · <span className="text-ok">✓ {item.okCount}</span>
+          {item.errCount ? <span className="text-err"> ✗ {item.errCount}</span> : null}
+        </span>
+        {range ? <span className="ml-auto shrink-0 text-[11px] text-dim">{range}</span> : null}
+      </summary>
+      <div className="space-y-1 border-t border-line bg-[#fafafc] px-2 py-1.5">
+        {item.calls.map((call, idx) => {
+          const statusCls = call.status === "ok" ? "text-ok" : call.status === "err" ? "text-err" : "text-dim";
+          return (
+            <details key={item.ids[idx]} className="overflow-hidden rounded-[10px] border border-line bg-panel" open={call.open}>
+              <summary className="flex h-6 cursor-pointer list-none items-center gap-2 px-2.5 text-[11.5px]">
+                <span className="flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded-md bg-chip text-[10.5px]">{call.icon}</span>
+                <code className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap rounded-md bg-chip px-1.5 py-0.5 font-mono text-[11px]">
+                  {call.display}
+                </code>
+                <span className={`ml-auto shrink-0 text-[10.5px] font-semibold ${statusCls}`}>{call.label}</span>
+              </summary>
+              <pre className="max-h-[280px] overflow-auto whitespace-pre-wrap border-t border-line bg-[#fafafc] px-3 py-2 font-mono text-[11.5px]">
+                {"$ " + call.cmd + (call.output ? "\n" + call.output : "")}
+              </pre>
+            </details>
+          );
+        })}
+      </div>
+    </details>
+  );
+}
+
 function ReviewCard({ item }: { item: ReviewCardItem }) {
   const findingCount = item.findings.length;
   const visibleFindings = item.findings.slice(0, 12);
   return (
     <div className="my-3.5 ml-9 overflow-hidden rounded-[14px] border border-codex/20 bg-panel shadow-card">
       <div className="flex flex-wrap items-center gap-2 border-b border-line px-3.5 py-2.5">
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-codex-soft text-[13px] font-extrabold text-codex">⌘</span>
+        <span className="flex h-6.5 w-6.5 shrink-0 items-center justify-center rounded-lg bg-codex-soft text-[13px] font-extrabold text-codex">⌘</span>
         <span className="text-[13.5px] font-bold">Codex review</span>
         {item.verdict ? (
-          <span className={`rounded-full border px-2 py-0.5 font-mono text-[10.5px] font-bold ${verdictClass(item.verdict)}`}>{item.verdict}</span>
+          <span className={`rounded-full border px-2.5 py-0.5 text-[11.5px] font-extrabold ${verdictClass(item.verdict)}`}>{verdictLabel(item.verdict)}</span>
         ) : null}
         <span className="text-[11px] text-dim">
           {findingCount ? `${findingCount} finding${findingCount === 1 ? "" : "s"}` : "без findings"}
@@ -617,12 +997,7 @@ function ReviewCard({ item }: { item: ReviewCardItem }) {
                   <span className={`rounded-full border px-2 py-0.5 text-[10.5px] font-extrabold ${severityClass(finding.severity)}`}>
                     {finding.severity}
                   </span>
-                  {finding.file ? (
-                    <code className="min-w-0 max-w-full truncate rounded-md bg-chip px-1.5 py-0.5 font-mono text-[11.5px]" title={finding.file}>
-                      {finding.file}
-                      {finding.line ? `:${finding.line}` : ""}
-                    </code>
-                  ) : null}
+                  {finding.file ? <FileRef file={finding.file} line={finding.line} /> : null}
                 </div>
                 <div className="mt-1.5 whitespace-pre-wrap break-words text-[13px]">{md(finding.title)}</div>
                 {finding.body && finding.body !== finding.title ? (
@@ -651,27 +1026,21 @@ function ReviewCard({ item }: { item: ReviewCardItem }) {
 
 function MemCitationCard({ item }: { item: MemCitationItem }) {
   const visibleEntries = item.entries.slice(0, 8);
-  const visibleIds = item.rolloutIds.slice(0, 5);
+  const visibleIds = item.rolloutIds.slice(0, 6);
   return (
-    <div className="my-2.5 ml-9 overflow-hidden rounded-[14px] border border-line bg-panel shadow-card">
-      <div className="flex flex-wrap items-center gap-2 border-b border-line px-3.5 py-2">
-        <span className="flex h-6.5 w-6.5 shrink-0 items-center justify-center rounded-lg bg-chip text-[13px]">↩</span>
-        <span className="text-[13px] font-bold">Memory citations</span>
-        <span className="text-[11px] text-dim">
-          {item.entries.length} entries · {item.rolloutIds.length} rollout IDs
-        </span>
-      </div>
-      <div className="px-3.5 py-2.5">
+    <details className="group my-2 ml-9 overflow-hidden rounded-[14px] border border-line bg-panel text-[12px] shadow-card">
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-3.5 py-2">
+        <span className="flex h-6.5 w-6.5 shrink-0 items-center justify-center rounded-lg bg-chip text-[13px]">📎</span>
+        <span className="text-[13px] font-semibold">цитати пам&apos;яті ({item.entries.length})</span>
+        <span className="ml-auto text-[11px] font-semibold text-accent group-open:hidden">показати</span>
+        <span className="ml-auto hidden text-[11px] font-semibold text-accent group-open:inline">згорнути</span>
+      </summary>
+      <div className="border-t border-line px-3.5 py-2.5">
         {visibleEntries.length ? (
           <div className="space-y-1.5">
             {visibleEntries.map((entry, idx) => (
               <div key={idx} className="min-w-0 rounded-[9px] bg-[#fbfbfd] px-2.5 py-1.5">
-                <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-                  <code className="min-w-0 max-w-full truncate rounded-md bg-chip px-1.5 py-0.5 font-mono text-[11.5px]" title={entry.target}>
-                    {entry.target}
-                    {entry.line ? `:${entry.line}` : ""}
-                  </code>
-                </div>
+                <FileRef file={entry.target} line={entry.line ? Number(entry.line.split("-", 1)[0]) : undefined} />
                 {entry.note ? <div className="mt-1 whitespace-pre-wrap break-words text-[12px] text-[#555]">{entry.note}</div> : null}
               </div>
             ))}
@@ -683,9 +1052,10 @@ function MemCitationCard({ item }: { item: MemCitationItem }) {
           <div className="mt-1.5 text-[12px] text-dim">ще {item.entries.length - visibleEntries.length} entries у raw</div>
         ) : null}
         {visibleIds.length ? (
-          <div className="mt-2 flex flex-wrap gap-1.5">
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            <span className="text-[11px] text-dim">rollout:</span>
             {visibleIds.map((id) => (
-              <code key={id} className="rounded-full bg-chip px-2 py-0.5 font-mono text-[10.5px] text-[#555]">
+              <code key={id} className="rounded-full bg-chip px-2 py-0.5 font-mono text-[10.5px] text-dim" title={id}>
                 {id.slice(0, 8)}
               </code>
             ))}
@@ -701,13 +1071,14 @@ function MemCitationCard({ item }: { item: MemCitationItem }) {
           </pre>
         </details>
       </div>
-    </div>
+    </details>
   );
 }
 
 export function FeedItem({ item }: { item: Item }) {
   if (item.kind === "image") return <ImageCard media={item.media} data={item.data} w={item.w} h={item.h} bytes={item.bytes} />;
   if (item.kind === "blob") return <BlobCard bytes={item.bytes} text={item.text} />;
+  if (item.kind === "sysmsg") return <SysMsgCard label={item.label} text={item.text} />;
   if (item.kind === "review") return <ReviewCard item={item} />;
   if (item.kind === "mem-citation") return <MemCitationCard item={item} />;
   if (item.kind === "prose") {
@@ -718,7 +1089,7 @@ export function FeedItem({ item }: { item: Item }) {
         <div className={`mt-1 flex h-6.5 w-6.5 shrink-0 items-center justify-center rounded-full text-xs font-extrabold text-white ${cls}`}>{icon}</div>
         <div className="min-w-0 flex-1 whitespace-pre-wrap break-words">
           {hhmm(item.ts) ? <div className="mb-0.5 text-[11px] text-dim">{hhmm(item.ts)}</div> : null}
-          {md(item.text)}
+          {mdBlocks(item.text)}
         </div>
       </div>
     );
@@ -728,7 +1099,19 @@ export function FeedItem({ item }: { item: Item }) {
     return (
       <div className="my-3.5 flex justify-end">
         <div className="max-w-[75%] whitespace-pre-wrap break-words rounded-2xl bg-user px-4 py-2.5">
-          {long ? <details><summary>{item.text.slice(0, 180)}… ({item.text.length} симв.)</summary>{item.text}</details> : item.text}
+          {long ? (
+            <details className="group/usr">
+              <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+                <span className="group-open/usr:hidden">
+                  {item.text.slice(0, 180)}… <span className="font-semibold text-accent">({item.text.length} симв.)</span>
+                </span>
+                <span className="hidden text-[11px] font-semibold text-dim group-open/usr:inline">згорнути ↥</span>
+              </summary>
+              {item.text}
+            </details>
+          ) : (
+            item.text
+          )}
         </div>
       </div>
     );
@@ -739,7 +1122,7 @@ export function FeedItem({ item }: { item: Item }) {
       <details className="my-2.5 ml-9 overflow-hidden rounded-[14px] border border-line bg-panel shadow-card" open={item.call.open}>
         <summary className="flex cursor-pointer list-none items-center gap-2.5 px-3.5 py-2">
           <span className="flex h-6.5 w-6.5 shrink-0 items-center justify-center rounded-lg bg-chip text-[13px]">{item.call.icon}</span>
-          <code className="max-w-[70%] overflow-hidden text-ellipsis whitespace-nowrap rounded-md bg-chip px-2 py-0.5 font-mono text-[12.5px]">{item.call.cmd}</code>
+          <code className="max-w-[70%] overflow-hidden text-ellipsis whitespace-nowrap rounded-md bg-chip px-2 py-0.5 font-mono text-[12.5px]">{item.call.display}</code>
           <span className={`ml-auto shrink-0 text-xs font-semibold ${statusCls}`}>{item.call.label}</span>
         </summary>
         <pre className="max-h-[340px] overflow-auto whitespace-pre-wrap border-t border-line bg-[#fafafc] px-3.5 py-2.5 font-mono text-[12.5px]">
@@ -748,6 +1131,7 @@ export function FeedItem({ item }: { item: Item }) {
       </details>
     );
   }
+  if (item.kind === "cmd-group") return <CmdGroupCard item={item} />;
   if (item.kind === "edit") {
     return (
       <div className="my-2.5 ml-9 flex items-center gap-3 rounded-[14px] border border-line bg-panel px-3.5 py-2.5 shadow-card">
@@ -780,9 +1164,12 @@ export function FeedItem({ item }: { item: Item }) {
         <div className="px-3.5 pb-2.5 pt-1">
           {item.summary ? <div className="text-[13px] font-bold">{item.summary}</div> : null}
           {long ? (
-            <details className="mt-0.5 whitespace-pre-wrap break-words text-[13px]">
-              <summary className="cursor-pointer list-none text-[12.5px] text-[#555]">
-                {item.text.slice(0, 260).trimEnd()}… <span className="font-semibold text-accent">показати все</span>
+            <details className="group/tmsg mt-0.5 whitespace-pre-wrap break-words text-[13px]">
+              <summary className="cursor-pointer list-none text-[12.5px] text-[#555] [&::-webkit-details-marker]:hidden">
+                <span className="group-open/tmsg:hidden">
+                  {item.text.slice(0, 260).trimEnd()}… <span className="font-semibold text-accent">показати все</span>
+                </span>
+                <span className="hidden text-[11px] font-semibold text-dim group-open/tmsg:inline">згорнути ↥</span>
               </summary>
               {item.text}
             </details>
