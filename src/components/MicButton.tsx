@@ -10,8 +10,40 @@ const MAX_SECONDS = 120;
 /* Sub-2KB blobs are a misclick, not speech — dropped without a server call. */
 const MIN_BLOB_BYTES = 2_000;
 
+const METER_BARS = 13;
+const METER_WIDTH = 56;
+const METER_HEIGHT = 16;
+/* Voice energy lives in the lower spectrum; the top bins of a 64-bin FFT stay
+   near zero and would render as permanently dead bars. */
+const METER_SPECTRUM_SHARE = 0.65;
+
 function fmtElapsed(s: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+function drawMeter(canvas: HTMLCanvasElement, bins: Uint8Array): void {
+  const dpr = window.devicePixelRatio || 1;
+  if (canvas.width !== METER_WIDTH * dpr || canvas.height !== METER_HEIGHT * dpr) {
+    canvas.width = METER_WIDTH * dpr;
+    canvas.height = METER_HEIGHT * dpr;
+  }
+  const g = canvas.getContext("2d");
+  if (!g) return;
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, METER_WIDTH, METER_HEIGHT);
+  const usable = Math.max(METER_BARS, Math.floor(bins.length * METER_SPECTRUM_SHARE));
+  const step = usable / METER_BARS;
+  const barWidth = METER_WIDTH / METER_BARS;
+  for (let i = 0; i < METER_BARS; i += 1) {
+    const from = Math.floor(i * step);
+    const to = Math.max(from + 1, Math.floor((i + 1) * step));
+    let sum = 0;
+    for (let j = from; j < to; j += 1) sum += bins[j] ?? 0;
+    const level = sum / (to - from) / 255;
+    const barHeight = Math.max(1.5, level * METER_HEIGHT);
+    g.fillStyle = `rgba(198, 40, 40, ${(0.35 + level * 0.65).toFixed(3)})`;
+    g.fillRect(i * barWidth + 1, (METER_HEIGHT - barHeight) / 2, barWidth - 2, barHeight);
+  }
 }
 
 /**
@@ -26,6 +58,8 @@ export function MicButton({ onText, onError }: { onText: (text: string) => void;
   const chunksRef = useRef<Blob[]>([]);
   const discardRef = useRef(false);
   const timerRef = useRef<number | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const meterRef = useRef<{ ctx: AudioContext; raf: number } | null>(null);
 
   const stopTimer = () => {
     if (timerRef.current !== null) {
@@ -34,9 +68,43 @@ export function MicButton({ onText, onError }: { onText: (text: string) => void;
     }
   };
 
+  const stopMeter = () => {
+    const meter = meterRef.current;
+    meterRef.current = null;
+    if (meter) {
+      cancelAnimationFrame(meter.raf);
+      void meter.ctx.close().catch(() => undefined);
+    }
+  };
+
+  /* Live input-level bars during recording. Dictation works without them, so
+     an AudioContext failure only costs the visual. */
+  const startMeter = (stream: MediaStream) => {
+    let ctx: AudioContext;
+    try {
+      ctx = new AudioContext();
+    } catch {
+      return;
+    }
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 128;
+    analyser.smoothingTimeConstant = 0.7;
+    ctx.createMediaStreamSource(stream).connect(analyser);
+    const bins = new Uint8Array(analyser.frequencyBinCount);
+    const draw = () => {
+      if (!meterRef.current) return;
+      meterRef.current.raf = requestAnimationFrame(draw);
+      analyser.getByteFrequencyData(bins);
+      const canvas = canvasRef.current;
+      if (canvas) drawMeter(canvas, bins);
+    };
+    meterRef.current = { ctx, raf: requestAnimationFrame(draw) };
+  };
+
   useEffect(() => {
     return () => {
       stopTimer();
+      stopMeter();
       discardRef.current = true;
       const rec = recRef.current;
       if (rec && rec.state !== "inactive") rec.stop();
@@ -46,6 +114,7 @@ export function MicButton({ onText, onError }: { onText: (text: string) => void;
 
   const finish = async () => {
     stopTimer();
+    stopMeter();
     const rec = recRef.current;
     recRef.current = null;
     rec?.stream.getTracks().forEach((track) => track.stop());
@@ -95,6 +164,7 @@ export function MicButton({ onText, onError }: { onText: (text: string) => void;
     };
     rec.start(250);
     recRef.current = rec;
+    startMeter(stream);
     setElapsed(0);
     setPhase("rec");
     timerRef.current = window.setInterval(() => {
@@ -125,7 +195,13 @@ export function MicButton({ onText, onError }: { onText: (text: string) => void;
           onClick={handleMain}
           className="flex items-center gap-1.5 rounded-[8px] border border-err/50 bg-[#fff2f2] px-2 py-1 text-[11px] font-bold text-err focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-err/40"
         >
-          <span className="h-2 w-2 animate-pulse rounded-full bg-err" />
+          <canvas
+            ref={canvasRef}
+            width={METER_WIDTH}
+            height={METER_HEIGHT}
+            className="h-4 w-14"
+            aria-hidden
+          />
           {fmtElapsed(elapsed)}
         </button>
         <button
