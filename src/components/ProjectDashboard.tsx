@@ -289,7 +289,7 @@ export function ProjectDashboard({ files, project, openNonce }: Props) {
 
   const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
-    if ((event.target as HTMLElement).closest('button, a, input, textarea, select, [draggable="true"]')) return;
+    if ((event.target as HTMLElement).closest('button, a, input, textarea, select, [draggable="true"], [data-pan-ignore]')) return;
     const el = scrollRef.current;
     if (!el) return;
     dragRef.current = { x: event.clientX, y: event.clientY, left: el.scrollLeft, active: false };
@@ -301,6 +301,13 @@ export function ProjectDashboard({ files, project, openNonce }: Props) {
     const dx = event.clientX - drag.x;
     const dy = event.clientY - drag.y;
     if (!drag.active) {
+      /* A growing text selection means the press landed on selectable content
+         the pan exemptions missed — panning now would wipe the selection. */
+      const selection = window.getSelection();
+      if (selection && !selection.isCollapsed) {
+        dragRef.current = null;
+        return;
+      }
       if (Math.abs(dx) < 8 || Math.abs(dx) < Math.abs(dy) * 1.2) return;
       drag.active = true;
       el.setPointerCapture(event.pointerId);

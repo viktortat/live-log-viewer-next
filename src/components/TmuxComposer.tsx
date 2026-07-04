@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { ArrowRight, ArrowUpToLine, ImageIcon, Loader2, Play, SquareTerminal, X } from "@/components/icons";
 import { useTmuxTarget } from "@/hooks/useTmuxTarget";
@@ -83,8 +83,18 @@ export function TmuxComposer({ file }: { file: FileEntry }) {
   const [sending, setSending] = useState(false);
   const [status, setStatus] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [sent, setSent] = useState<SentEntry[]>([]);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  /* The field grows with its content up to ~6 rows, then scrolls inside
+     itself. Measured from scrollHeight on every text change, which also
+     covers restored drafts and dictation inserts. */
+  useLayoutEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "0px";
+    el.style.height = Math.min(el.scrollHeight + 2, 160) + "px";
+  }, [text]);
 
   /* eslint-disable-next-line react-hooks/set-state-in-effect */
   useEffect(() => setSent(readSent(file.path)), [file.path]);
@@ -133,7 +143,7 @@ export function TmuxComposer({ file }: { file: FileEntry }) {
       });
   };
 
-  const handlePaste = (event: React.ClipboardEvent<HTMLInputElement>) => {
+  const handlePaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const picks = Array.from(event.clipboardData.items)
       .filter((entry) => entry.type.startsWith("image/"))
       .map((entry) => entry.getAsFile())
@@ -228,9 +238,9 @@ export function TmuxComposer({ file }: { file: FileEntry }) {
           ))}
         </div>
       ) : null}
-      <div className="flex items-center gap-1.5">
+      <div className="flex items-end gap-1.5">
         <span
-          className="inline-flex shrink-0 items-center gap-1 rounded-full bg-chip px-1.5 py-0.5 font-mono text-[9.5px] font-semibold text-[#555]"
+          className="mb-[3px] inline-flex shrink-0 items-center gap-1 rounded-full bg-chip px-1.5 py-0.5 font-mono text-[9.5px] font-semibold text-[#555]"
           title={relayMode ? "передасться через кореневу сесію гілки" : spawnMode ? "нове tmux-вікно з відновленим агентом" : `tmux ${target}`}
         >
           {relayMode ? (
@@ -247,15 +257,24 @@ export function TmuxComposer({ file }: { file: FileEntry }) {
             </>
           )}
         </span>
-        <input
+        <textarea
           ref={inputRef}
           value={text}
+          rows={1}
           onChange={(event) => setText(event.target.value)}
           onPaste={handlePaste}
+          onKeyDown={(event) => {
+            /* Enter sends like the old single-line input; Shift+Enter makes a
+               new line. Composition guard keeps IME confirms from sending. */
+            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+              event.preventDefault();
+              void send();
+            }
+          }}
           placeholder={relayMode ? "написати — передам через кореневу сесію…" : spawnMode ? "промпт — агент запуститься в tmux…" : "написати агенту…"}
           aria-label="Текст для агента"
           disabled={sending}
-          className="min-w-0 flex-1 rounded-[8px] border border-line bg-panel px-2 py-1 text-[12px] text-[#222] placeholder:text-dim focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-60"
+          className="min-w-0 flex-1 resize-none overflow-y-auto rounded-[8px] border border-line bg-panel px-2 py-1 text-[12px] leading-[18px] text-[#222] placeholder:text-dim focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-60"
         />
         <input
           ref={fileRef}

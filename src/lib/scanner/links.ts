@@ -232,6 +232,7 @@ const ANCESTRY_MAX_DEPTH = 15;
  * on disk so it also survives a server restart.
  */
 const LINEAGE_FILE = path.join(os.homedir(), ".claude", "viewer-state", "codex-lineage.json");
+const LINEAGE_MAX_ENTRIES = 2000;
 const lineageCache = globalCache<string>("codex-lineage");
 let lineageLoaded = false;
 let lineageDirty = false;
@@ -242,14 +243,27 @@ function loadLineage(): void {
   const data = readJson(LINEAGE_FILE);
   if (data && typeof data === "object" && !Array.isArray(data)) {
     for (const [child, parent] of Object.entries(data)) {
-      if (typeof parent === "string" && !lineageCache.has(child)) lineageCache.set(child, parent);
+      /* A lineage entry earns its bytes only while the rollout file exists,
+         so the store shrinks with the sessions directory instead of growing
+         forever. */
+      if (typeof parent === "string" && !lineageCache.has(child) && fs.existsSync(child)) {
+        lineageCache.set(child, parent);
+      }
     }
+    if (lineageCache.size !== Object.keys(data).length) lineageDirty = true;
   }
 }
 
 function rememberLineage(child: string, parent: string): void {
   if (lineageCache.get(child) === parent) return;
   lineageCache.set(child, parent);
+  /* Backstop cap: Map keeps insertion order, so the oldest links — rollouts
+     that stopped being scanned long ago — fall out first. */
+  while (lineageCache.size > LINEAGE_MAX_ENTRIES) {
+    const oldest = lineageCache.keys().next().value;
+    if (oldest === undefined) break;
+    lineageCache.delete(oldest);
+  }
   lineageDirty = true;
 }
 

@@ -33,6 +33,9 @@ export function BranchPane({ file, files, tasks, onSelect, isRoot, onClose, drag
   const live = file.activity === "live";
   return (
     <section
+      /* Text inside the column must stay selectable: the canvas drag-pan skips
+         presses that start here (wheel pan still covers scrolling). */
+      data-pan-ignore
       className={`flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[10px] border bg-panel shadow-card ${
         isRoot ? "border-t-4" : "border-t-2"
       } ${live ? "border-ok/60 shadow-[0_0_0_3px_rgba(47,158,68,0.16)]" : "border-line"}`}
