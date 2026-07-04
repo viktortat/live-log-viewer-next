@@ -70,36 +70,35 @@ path on Linux too, for testing.
 Without tmux installed, log viewing still works; the composer, agent spawn
 and resume-into-pane features are unavailable.
 
-## Доступ через Tailscale
+## Tailscale access
 
 ```bash
 bunx agent-log-viewer --tailscale
 ```
 
-`--tailscale` запускає локальний сервер на `127.0.0.1` і відкриває його в
-tailnet через foreground-процес `tailscale serve <port>`. Публічний інтернет
-через Funnel не використовується.
+`--tailscale` starts the local server on `127.0.0.1` and exposes it inside
+your tailnet through a foreground `tailscale serve <port>` process. The
+public internet (Funnel) is never used.
 
-CLI створює 32-символьний ключ доступу, додає його в tailnet URL як `?k=...`,
-а після першого відкриття сервер зберігає `llv_auth` cookie на 30 днів.
-`--new-token` генерує новий ключ і одразу робить недійсними всі старі
-cookie — перевірка порівнює хеш кожного разу з поточним токеном, тож стара
-кука з попереднім ключем більше не проходить.
+The CLI generates a 32-character access key, appends it to the tailnet URL
+as `?k=...`, and after the first visit the server sets an `llv_auth` cookie
+for 30 days. `--new-token` generates a fresh key and immediately invalidates
+every old cookie — each request compares the hash against the current token,
+so a cookie minted with a previous key no longer passes.
 
-Термінал одразу друкує tailnet URL і QR-код для сканування телефоном. Той
-самий QR доступний і в самому веб-інтерфейсі: кнопка з іконкою QR у шапці
-списку проєктів відкриває попап з кодом і посиланням у вигляді тексту (з
-кнопкою «копіювати»).
-QR малюється повністю на клієнті (пакет `qrcode`, без зовнішніх запитів) і
-віддається лише вже авторизованим клієнтам — той самий токен-гейт із
-`src/proxy.ts` захищає й `/api/access`. Якщо сервер запущено без
-`--tailscale`, кнопка показує підказку запустити
-`bunx agent-log-viewer --tailscale`.
+The terminal prints the tailnet URL along with a QR code to scan with a
+phone. The same QR is available inside the web UI: the QR-icon button in the
+project list header opens a popover with the code and the link as text (with
+a copy button). The QR is rendered entirely client-side (the `qrcode`
+package, no external requests) and is served only to already-authorized
+clients — the same token gate from `src/proxy.ts` also protects
+`/api/access`. When the server runs without `--tailscale`, the button shows
+a hint to start `bunx agent-log-viewer --tailscale`.
 
-Кожен, хто має tailnet-доступ до цього URL, може читати всі agent transcripts,
-включно з чутливими даними, які потрапили в сесію, і може виконувати команди
-через `/api/tmux` та `/api/spawn`. Ставтеся до tailnet URL як до секрета — не
-пересилайте його стороннім.
+Anyone with tailnet access to this URL can read all agent transcripts,
+including any sensitive data that landed in a session, and can execute
+commands through `/api/tmux` and `/api/spawn`. Treat the tailnet URL as a
+secret — do not forward it to anyone else.
 
 ## Security model
 

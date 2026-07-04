@@ -408,7 +408,8 @@ Files: `README.md` (modify), `docs/RELEASING.md` (new), `ARCHITECTURE.md`
 - "Run" section: **bunx quickstart first** (`bunx agent-log-viewer`), then
   the existing clone-and-build path second (still works, keep it, just
   reorder/relabel).
-- New section "Доступ через Tailscale" (Ukrainian): how `--tailscale` works,
+- New section "Tailscale access" (English, like the rest of the README): how
+  `--tailscale` works,
   what gets exposed (tailnet-only via `tailscale serve`, never funnel/public
   internet), the token-in-URL/cookie mechanics, and an explicit security
   paragraph — anyone with tailnet access to this URL can read all agent

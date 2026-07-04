@@ -172,7 +172,7 @@ Tree mode:
 1. Project groups: **stable alphabetical order** (uk locale). Groups NEVER
    reorder because of activity.
 2. Inside an expanded project: roots AND children sorted by **subtree
-   last-update DESC** — найсвіжіше завжди зверху всередині проєкту.
+   last-update DESC** — the freshest item is always on top within a project.
 3. Collapse everywhere:
    - project headers collapsible (chevron ▶/▼, hidden count + `N live` badge);
    - every tree node with children collapsible with its own chevron;
