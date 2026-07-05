@@ -85,8 +85,8 @@ export function buildAttentionQueue(
 }
 
 /**
- * Id-anchored cycle step: the pointer is an id, not an index, so an item
- * answered elsewhere silently drops out and the next press serves the
+ * Id-anchored cycle step: the pointer follows its id through reorderings, so
+ * an item answered elsewhere silently drops out and the next press serves the
  * next-oldest remaining item (queue head forward, tail backward). Wraps.
  */
 export function nextAttention(

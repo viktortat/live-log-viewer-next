@@ -11,7 +11,7 @@ import { useIsMobile } from "@/hooks/useIsMobile";
 import { type TFunction, useLocale } from "@/lib/i18n";
 import type { FileEntry } from "@/lib/types";
 
-import { attentionId, buildAttentionQueue, nextAttention, type AttentionItem } from "./attention";
+import { attentionId, buildAttentionQueue, nextAttention, STALLED_ATTENTION_TTL, type AttentionItem } from "./attention";
 import { OverviewBoard } from "./OverviewBoard";
 import { ProjectDashboard, queueColumnOpen } from "./ProjectDashboard";
 import { OVERVIEW, projectKey } from "./projectModel";
@@ -137,8 +137,22 @@ export function Viewer() {
   /* eslint-enable react-hooks/set-state-in-effect */
 
   /* The one queue every counter shows: badge, popover and the tab title all
-     read the same list, stalled tail included (D10). */
-  const queue = useMemo(() => buildAttentionQueue(files), [files]);
+     read the same list, stalled tail included (D10). The clock advances when
+     the oldest stalled entry crosses its 2h TTL: useFiles keeps the array
+     identity while the /api/files body is unchanged, so without this tick an
+     expired stalled item would sit in the badge until an unrelated change. */
+  const [clock, setClock] = useState(() => Date.now() / 1000);
+  const queue = useMemo(() => buildAttentionQueue(files, clock), [files, clock]);
+  useEffect(() => {
+    const expiries = files
+      .filter((file) => file.activity === "stalled")
+      .map((file) => file.mtime + STALLED_ATTENTION_TTL)
+      .filter((at) => at > clock);
+    if (!expiries.length) return;
+    const delay = Math.max(0, (Math.min(...expiries) - Date.now() / 1000) * 1000) + 500;
+    const timer = window.setTimeout(() => setClock(Date.now() / 1000), delay);
+    return () => window.clearTimeout(timer);
+  }, [files, clock]);
   const [queueOpen, setQueueOpen] = useState(false);
   const queueRef = useRef<HTMLDivElement | null>(null);
 
@@ -181,8 +195,8 @@ export function Viewer() {
     setFocusRequest((prev) => ({ path, nonce: (prev?.nonce ?? 0) + 1 }));
   }, []);
 
-  /* The N-cycle position is an id, not an index: an item answered elsewhere
-     drops out without moving the pointer's neighbors (D12). */
+  /* The N-cycle position anchors to an id: an item answered elsewhere drops
+     out without moving the pointer's neighbors (D12). */
   const cycleRef = useRef<string | null>(null);
 
   /* Membership key first, Set second: polls rebuild the queue array, but the

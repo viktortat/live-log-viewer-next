@@ -78,7 +78,7 @@ segment of the badge pill + the `F` key (free on the scheme). Active filter
 dims (CSS opacity — geometry untouched, no layout reshuffle) every scheme
 node whose file is not in the queue. The state is React-only: **not
 persisted, auto-disables when the queue empties.** *Why:* the user scans the
-board visually, not only by keyboard; research ranks this filter inside the
+board visually as much as by keyboard; research ranks this filter inside the
 top attention-routing feature. No persistence because a filter that survives
 reload silently grays the whole board ("why is everything dim?"); a visible
 toggle is mandatory because a state that restyles the whole board needs a
@@ -92,7 +92,7 @@ alternatives (per-view headers, project rail) each miss a surface (mobile has
 no rail; the overview has a different header).
 
 **D8 — No dismiss/snooze in v1.** Pressing N again *is* the skip. *Why:* the
-feature is routing, not an inbox — the queue cleans itself when the user
+feature is pure routing — the queue cleans itself when the user
 answers; hidden snooze state contradicts the badge's "real count of blocked
 agents" promise and creates the "badge says 2, I see 3" bug class. If long
 waitingInputs prove annoying in practice, a 30 min snooze by id in
@@ -110,7 +110,7 @@ kill the feature's core gesture.
 `buildAttentionQueue(files).length` (now including the stalled tail). Push is
 deliberately narrower and unchanged: it fires on hard-blocked *events* only.
 *Why:* two diverging numbers side by side is a classic trust hole; push is an
-interruption, not a state readout — the research's push-demand evidence
+interruption, and the badge owns the state readout — the research's push-demand evidence
 (Nimbalyst, AgentShell, Cursor forum) is all about waiting-for-input events,
 which is exactly what the existing pipeline already sends.
 
@@ -122,7 +122,7 @@ a second poll loop for zero new data. The queue is pure derived client state.
 **D12 — Lifecycle: id-anchored cycle pointer, silent convergence.** Answering
 from another tab or the phone clears the signal on the next poll (≤10 s) and
 the item disappears from queue, badge and title simultaneously. The N-cycle
-position is an *id*, not an index: when the current id vanishes, the next
+position is an *id*: when the current id vanishes, the next
 press serves the next-oldest remaining item. The queue never fires
 notifications of its own — toast/title/chime/push keep their seen-sets. All
 five surfaces derive identity from one shared `attentionId(file)` helper so
