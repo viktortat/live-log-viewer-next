@@ -49,7 +49,13 @@ export function QuestionCard({ file }: { file: FileEntry }) {
         const res = await fetch("/api/tmux", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ action: "dialog-key", path: file.path, key, ...(/^[1-9]$/.test(key) ? { label } : {}) }),
+          body: JSON.stringify({
+            action: "dialog-key",
+            path: file.path,
+            key,
+            ...(menu ? { question: menu.question } : {}),
+            ...(/^[1-9]$/.test(key) ? { label } : {}),
+          }),
         });
         const json = (await res.json()) as { ok?: boolean; error?: string };
         if (!res.ok || !json.ok) {

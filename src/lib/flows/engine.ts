@@ -409,7 +409,7 @@ async function tickFlow(
   if (flow.state === "relaying") {
     const relayKey = roundKey(flow, round);
     if (round.relayStartedAt && round.relayedAt === null && !relayStartedThisProcess.has(relayKey)) {
-      markNeedsDecision(flow, "relay was interrupted — можливо, доставлено двічі");
+      markNeedsDecision(flow, "relay was interrupted; it may have been delivered twice");
       return JSON.stringify(flow) !== before;
     }
     try {

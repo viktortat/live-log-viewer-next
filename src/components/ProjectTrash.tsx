@@ -3,13 +3,14 @@
 import { useEffect, useState } from "react";
 
 import { Archive, Trash2 } from "@/components/icons";
+import { useLocale } from "@/lib/i18n";
 import type { FileEntry } from "@/lib/types";
 
 import { cleanTitle } from "@/lib/title";
 
 import { DeleteFileButton } from "./DeleteFileButton";
 import { OVERVIEW } from "./projectModel";
-import { activityDot, engineBadge, fmtAge, ukPlural } from "./utils";
+import { activityDot, engineBadge, fmtAge } from "./utils";
 
 /* Module-level: the React Compiler flags direct global mutation inside a
    component body (same reason as gotoProject in ProjectDashboard). */
@@ -25,12 +26,13 @@ function gotoOverview() {
  * opens as a node or deletes the file from disk.
  */
 export function QuietFileList({ files, onOpen }: { files: FileEntry[]; onOpen: (file: FileEntry) => void }) {
+  const { t } = useLocale();
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5">
       <div className="mx-auto w-full max-w-[760px]">
-        <div className="text-[13.5px] font-semibold text-dim">На схемі порожньо, але в проєкті є записи</div>
+        <div className="text-[13.5px] font-semibold text-dim">{t("trash.title")}</div>
         <div className="mb-3 mt-0.5 text-[12px] text-dim">
-          Клік по рядку відкриває розмову нодою; смітник видаляє її файл з диска назавжди.
+          {t("trash.hint")}
         </div>
         <div className="space-y-1.5">
           {files.map((file) => (
@@ -43,6 +45,7 @@ export function QuietFileList({ files, onOpen }: { files: FileEntry[]; onOpen: (
 }
 
 function QuietFileRow({ file, onOpen }: { file: FileEntry; onOpen: (file: FileEntry) => void }) {
+  const { t } = useLocale();
   const [gone, setGone] = useState(false);
   const badge = engineBadge(file);
   if (gone) {
@@ -50,7 +53,7 @@ function QuietFileRow({ file, onOpen }: { file: FileEntry; onOpen: (file: FileEn
       <div className="flex items-center gap-2 rounded-[8px] border border-line bg-chip/60 px-3 py-1.5 text-[11.5px] font-semibold text-dim">
         <Trash2 className="h-3 w-3 shrink-0" aria-hidden />
         <span className="min-w-0 truncate">{cleanTitle(file.title, 80)}</span>
-        <span className="shrink-0">· видалено з диска</span>
+        <span className="shrink-0">{t("trash.deletedFromDisk")}</span>
       </div>
     );
   }
@@ -59,7 +62,7 @@ function QuietFileRow({ file, onOpen }: { file: FileEntry; onOpen: (file: FileEn
       <button
         type="button"
         className="flex h-full min-w-0 flex-1 items-center gap-2 rounded-[6px] text-left hover:bg-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-        aria-label={`Відкрити ${cleanTitle(file.title, 60)}`}
+        aria-label={t("trash.open", { title: cleanTitle(file.title, 60) })}
         onClick={() => onOpen(file)}
       >
         <span className={`h-2 w-2 shrink-0 rounded-full ${activityDot(file.activity)}`} />
@@ -70,7 +73,7 @@ function QuietFileRow({ file, onOpen }: { file: FileEntry; onOpen: (file: FileEn
           {cleanTitle(file.title, 90)}
         </span>
         <span className="shrink-0 text-[10.5px] font-semibold text-dim">{fmtAge(file.mtime)}</span>
-        <span className="shrink-0 text-[10.5px] text-dim">{(file.size / 1024).toFixed(0)} кБ</span>
+        <span className="shrink-0 text-[10.5px] text-dim">{(file.size / 1024).toFixed(0)} {t("common.kb")}</span>
       </button>
       <DeleteFileButton file={file} onDeleted={() => setGone(true)} />
     </div>
@@ -84,6 +87,7 @@ function QuietFileRow({ file, onOpen }: { file: FileEntry; onOpen: (file: FileEn
  * Reversible (rail archive section / new activity), so no confirmation.
  */
 export function ArchiveProjectButton({ files, onArchive }: { files: FileEntry[]; onArchive: () => void }) {
+  const { t } = useLocale();
   if (!files.length || files.some((file) => file.proc === "running" || file.activity === "live")) return null;
   return (
     <button
@@ -94,7 +98,7 @@ export function ArchiveProjectButton({ files, onArchive }: { files: FileEntry[];
         gotoOverview();
       }}
     >
-      <Archive className="h-3 w-3" aria-hidden /> В архів
+      <Archive className="h-3 w-3" aria-hidden /> {t("trash.toArchive")}
     </button>
   );
 }
@@ -105,6 +109,7 @@ export function ArchiveProjectButton({ files, onArchive }: { files: FileEntry[];
  * refuses any entry whose process is still alive.
  */
 export function DeleteProjectButton({ files }: { files: FileEntry[] }) {
+  const { t } = useLocale();
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -133,7 +138,7 @@ export function DeleteProjectButton({ files }: { files: FileEntry[] }) {
     setBusy(false);
     setConfirming(false);
     if (failed) {
-      setError(`не видалено ${failed} з ${files.length}`);
+      setError(t("trash.notDeleted", { failed, total: files.length }));
       return;
     }
     gotoOverview();
@@ -143,7 +148,7 @@ export function DeleteProjectButton({ files }: { files: FileEntry[] }) {
     return (
       <span className="inline-flex shrink-0 items-center gap-1 rounded-[10px] border border-err/30 bg-[#fff5f5] px-1.5 py-0.5 text-[11px]">
         <span className="px-0.5 font-semibold text-err">
-          Видалити з диска {files.length} {ukPlural(files.length, "файл", "файли", "файлів")} проєкту?
+          {t("trash.confirmDelete", { count: files.length })}
         </span>
         <button
           type="button"
@@ -151,14 +156,14 @@ export function DeleteProjectButton({ files }: { files: FileEntry[] }) {
           disabled={busy}
           onClick={removeAll}
         >
-          {busy ? "видаляю…" : "Так, видалити"}
+          {busy ? t("trash.deleting") : t("trash.confirmYes")}
         </button>
         <button
           type="button"
           className="rounded-lg border border-line bg-panel px-2 py-0.5 font-semibold text-dim focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
           onClick={() => setConfirming(false)}
         >
-          Скасувати
+          {t("common.cancel")}
         </button>
       </span>
     );
@@ -168,8 +173,8 @@ export function DeleteProjectButton({ files }: { files: FileEntry[] }) {
       <button
         type="button"
         className="inline-flex items-center rounded-full border border-line bg-bg p-1 text-dim hover:border-err/40 hover:text-err focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-        aria-label="Видалити проєкт з диска"
-        title="Видалити проєкт з диска"
+        aria-label={t("trash.deleteProject")}
+        title={t("trash.deleteProject")}
         onClick={() => setConfirming(true)}
       >
         <Trash2 className="h-3 w-3" aria-hidden />

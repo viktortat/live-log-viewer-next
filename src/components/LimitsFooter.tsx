@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 
+import { getLocale, type Locale, translate, useLocale } from "@/lib/i18n";
 import type { EngineLimits, LimitsPayload, LimitWindow } from "@/lib/types";
 
 import { engineTintOf, fmtAge } from "./utils";
@@ -10,27 +11,32 @@ const POLL_MS = 60_000;
 /** Codex numbers come from the last transcript event; flag them past this age. */
 const STALE_S = 20 * 60;
 
+const bcp47 = (locale = getLocale()) => (locale === "uk" ? "uk-UA" : "en-US");
+
 function fmtEta(resetsAt: number, now: number): string {
+  const locale = getLocale();
   const s = resetsAt - now;
-  if (s <= 60) return "зараз";
-  if (s < 5400) return "через " + Math.round(s / 60) + " хв";
-  if (s < 129600) return "через " + Math.round(s / 3600) + " год";
-  return "через " + Math.round(s / 86400) + " д";
+  if (s <= 60) return translate(locale, "limits.now");
+  if (s < 5400) return translate(locale, "limits.inMin", { n: Math.round(s / 60) });
+  if (s < 129600) return translate(locale, "limits.inHour", { n: Math.round(s / 3600) });
+  return translate(locale, "limits.inDay", { n: Math.round(s / 86400) });
 }
 
 /** Absolute reset moment: today's resets show the hour, later ones the date too. */
 function fmtResetAt(resetsAt: number, now: number): string {
   const d = new Date(resetsAt * 1000);
-  const time = d.toLocaleTimeString("uk", { hour: "2-digit", minute: "2-digit", hour12: false });
+  const time = d.toLocaleTimeString(bcp47(), { hour: "2-digit", minute: "2-digit", hour12: false });
   if (resetsAt - now < 86400) return time;
-  return d.toLocaleDateString("uk", { day: "numeric", month: "short" }) + " " + time;
+  return d.toLocaleDateString(bcp47(), { day: "numeric", month: "short" }) + " " + time;
 }
 
-function fmtStaleSince(staleSince: string | null | undefined): string | null {
+function fmtStaleSince(staleSince: string | null | undefined, locale: Locale): string | null {
   if (!staleSince) return null;
   const d = new Date(staleSince);
   if (Number.isNaN(d.getTime())) return null;
-  return "станом на " + d.toLocaleTimeString("uk", { hour: "2-digit", minute: "2-digit", hour12: false });
+  return translate(locale, "limits.asOf", {
+    time: d.toLocaleTimeString(bcp47(locale), { hour: "2-digit", minute: "2-digit", hour12: false }),
+  });
 }
 
 /** Bar keeps the engine identity color while there is headroom, then warns. */
@@ -51,6 +57,7 @@ function LimitRow({
   engineColor: string;
   now: number;
 }) {
+  const { t } = useLocale();
   if (!w) return null;
   const left = Math.max(0, Math.min(100, 100 - w.usedPercent));
   const color = barColor(left, engineColor);
@@ -59,7 +66,7 @@ function LimitRow({
       <div className="flex items-baseline justify-between">
         <span className="text-[11px] font-semibold text-ink">{label}</span>
         <span className="text-[11px] text-dim">
-          лишилось <span className={`font-bold tabular-nums ${left <= 30 ? "" : "text-ink"}`} style={left <= 30 ? { color } : undefined}>{Math.round(left)}%</span>
+          {t("limits.left")} <span className={`font-bold tabular-nums ${left <= 30 ? "" : "text-ink"}`} style={left <= 30 ? { color } : undefined}>{Math.round(left)}%</span>
         </span>
       </div>
       <div className="mt-1 h-[4px] overflow-hidden rounded-full bg-chip">
@@ -70,7 +77,7 @@ function LimitRow({
       </div>
       {w.resetsAt ? (
         <div className="mt-[3px] text-[10px] leading-none text-dim">
-          скид {fmtEta(w.resetsAt, now)} · {fmtResetAt(w.resetsAt, now)}
+          {t("limits.reset", { eta: fmtEta(w.resetsAt, now), at: fmtResetAt(w.resetsAt, now) })}
         </div>
       ) : null}
     </div>
@@ -90,6 +97,7 @@ function EngineBlock({
   now: number;
   staleHint: string | null;
 }) {
+  const { t } = useLocale();
   if (!limits || (!limits.session && !limits.weekly)) return null;
   const tint = engineTintOf(engine);
   const stale = limits.capturedAt && now - limits.capturedAt > STALE_S ? fmtAge(limits.capturedAt) : null;
@@ -104,12 +112,12 @@ function EngineBlock({
         {stale ? (
           <span
             className="h-1.5 w-1.5 shrink-0 self-center rounded-full bg-[#d29a2f]"
-            title={`дані застарілі: ${stale}`}
+            title={t("limits.stale", { stale })}
           />
         ) : null}
       </div>
-      <LimitRow label="5 год" window={limits.session} engineColor={tint.color} now={now} />
-      <LimitRow label="Тиждень" window={limits.weekly} engineColor={tint.color} now={now} />
+      <LimitRow label={t("limits.5h")} window={limits.session} engineColor={tint.color} now={now} />
+      <LimitRow label={t("limits.week")} window={limits.weekly} engineColor={tint.color} now={now} />
     </div>
   );
 }
@@ -131,6 +139,7 @@ function stickyPayload(previous: LimitsPayload | null, next: LimitsPayload): Lim
 
 /** Sidebar footer: Claude Code and Codex plan limits (5h session + weekly). */
 export function LimitsFooter() {
+  const { locale } = useLocale();
   const [snap, setSnap] = useState<{ data: LimitsPayload; at: number } | null>(null);
 
   useEffect(() => {
@@ -156,7 +165,7 @@ export function LimitsFooter() {
   }, []);
 
   if (!snap || (!snap.data.claude && !snap.data.codex)) return null;
-  const staleHint = fmtStaleSince(snap.data.staleSince);
+  const staleHint = fmtStaleSince(snap.data.staleSince, locale);
   return (
     <div className="shrink-0 border-t border-line px-3.5 pb-3 pt-2.5">
       <EngineBlock label="Claude" engine="claude" limits={snap.data.claude} now={snap.at} staleHint={staleHint} />

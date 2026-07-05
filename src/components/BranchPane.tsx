@@ -30,7 +30,7 @@ const PANE_TONES: Record<PaneState, { section: string; header: string; glow?: st
 };
 
 /** Maps the internal (Cyrillic) file.kind discriminant to a localized label. */
-function kindLabel(t: TFunction, kind: string): string {
+export function kindLabel(t: TFunction, kind: string): string {
   if (kind === "сесія") return t("kind.session");
   if (kind === "субагент") return t("kind.subagent");
   if (kind === "джоба") return t("kind.job");

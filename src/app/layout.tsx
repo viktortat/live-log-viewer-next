@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Живі логи",
+  title: "Live logs",
   description: "Live viewer for Codex/Claude agent logs",
 };
 
@@ -21,7 +21,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="uk" className="h-full antialiased">
+    <html lang="en" className="h-full antialiased">
       <body className="h-dvh overflow-hidden font-sans text-[15px]">
         {children}
       </body>

@@ -14,6 +14,7 @@ import {
   detectBlockingGate,
   detectStartupGate,
   isShellCommand,
+  parseScreenMenu,
   READY_MARKERS,
 } from "@/lib/status";
 
@@ -207,12 +208,10 @@ async function ensureDeliverable(target: TmuxTarget): Promise<void> {
   }
   for (let round = 0; round < 3; round += 1) {
     const screen = await paneScreen(target);
-    const startup = detectStartupGate(screen);
-    if (startup !== null) {
-      logEvent("gate", { target, result: "ok", reason: startup });
-      await runTmux(["send-keys", "-t", target, "Enter"]);
-      await sleep(GATE_SETTLE_MS);
-      continue;
+    const menu = parseScreenMenu(screen);
+    if (menu !== null) {
+      logEvent("gate", { target, result: "error", reason: "select_dialog" });
+      throw new Error("агент чекає на вибір у пейні — дай відповідь перед новим повідомленням");
     }
     const blocking = detectBlockingGate(screen);
     if (blocking !== null) {
@@ -222,6 +221,13 @@ async function ensureDeliverable(target: TmuxTarget): Promise<void> {
           ? "агент уперся в rate limit — повідомлення не надіслано"
           : "агент чекає на підтвердження в пейні — дай відповідь перед новим повідомленням",
       );
+    }
+    const startup = detectStartupGate(screen);
+    if (startup !== null) {
+      logEvent("gate", { target, result: "ok", reason: startup });
+      await runTmux(["send-keys", "-t", target, "Enter"]);
+      await sleep(GATE_SETTLE_MS);
+      continue;
     }
     return;
   }

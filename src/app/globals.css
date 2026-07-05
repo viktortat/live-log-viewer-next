@@ -27,6 +27,17 @@ body {
   color: var(--color-ink);
 }
 
+/* iOS Safari zooms the page when a focused field renders text under 16px.
+   Touch screens get 16px fields across the board (overriding the per-field
+   text-[...] utilities, hence !important); desktop keeps the compact type. */
+@media (pointer: coarse) {
+  input,
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+}
+
 /* Attention border: two soft comets orbiting the card edge in the state's
    color (--pane-glow) — visibly "waiting for you" without stealing focus. */
 @property --pane-angle {

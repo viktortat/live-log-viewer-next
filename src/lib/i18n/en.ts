@@ -24,12 +24,12 @@ export const en = {
   "common.nothingRunning": "nothing is running right now",
   "common.kb": "kB",
   "common.chars": "{n} chars",
-  "common.charsShort": "{n} chars",
 
   // Language toggle
   "lang.aria": "Interface language",
 
   // Age / time helpers (utils.ts)
+  "util.effortTitle": "Reasoning effort: {effort}",
   "time.agoSec": "{n}s ago",
   "time.agoMin": "{n}m ago",
   "time.agoHour": "{n}h ago",
@@ -208,7 +208,6 @@ export const en = {
   "img.error": "image error",
   "img.previewAlt": "image preview {n}",
   "img.removeAria": "Remove image {n}",
-  "img.imageWord": { one: "image", other: "images" },
   "img.toFilePaths": "as file paths",
 
   // QuestionCard
@@ -219,7 +218,6 @@ export const en = {
   "question.sentToPane": "Sent to the pane: {text}",
   "question.keysHint": "keys into the pane · or the composer below",
   "question.pane": "Pane {target}",
-  "question.replyBelow": "You can reply via the composer below.",
   "question.alreadyAnswered": "answer already recorded",
   "question.openFailed": "couldn't open the session",
   "question.opened": "opened {target}",
@@ -265,7 +263,7 @@ export const en = {
   "feed.finishedTurn": "finished the turn — waiting for a reply",
   "feed.returnedResult": "returned with a result",
   "feed.noOutput": "No output yet — the file is empty for now",
-  "feed.onlyService": "No visible messages — only service records ({count}). Press «Technical»",
+  "feed.onlyService": "Only service records are present ({count}).",
   "feed.empty": "Empty (no rows to show)",
 
   // feed/renderers
@@ -283,6 +281,7 @@ export const en = {
   "render.protocol": "protocol",
   "render.jobLogNote": "(this is a job log: it has no command stdout; the full output is in the Codex rollout session in the left list)",
   "render.image": "image",
+  "render.dataKb": "{n} kB of data",
   "render.commands": { one: "{count} command", other: "{count} commands" },
   "render.noFindings": "no findings",
   "render.moreFindings": "{count} more findings in raw",
@@ -432,6 +431,7 @@ export const en = {
   // useDictation errors
   "dictation.failed": "couldn't transcribe",
   "dictation.silence": "silence — nothing recognized",
+  "dictation.unsupported": "recording is not supported in this browser",
   "dictation.liveError": "live transcription error",
   "dictation.connectionLost": "transcription connection dropped",
   "dictation.noMic": "no microphone access",

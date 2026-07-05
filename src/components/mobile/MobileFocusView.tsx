@@ -9,6 +9,7 @@ import type { FileEntry } from "@/lib/types";
 
 import { BranchPane } from "@/components/BranchPane";
 import { DraftAgentPane } from "@/components/DraftAgentPane";
+import { canHandoff, HandoffHandle } from "@/components/HandoffHandle";
 import { paneState, type PaneState } from "@/components/paneState";
 import type { BranchGroup } from "@/components/projectModel";
 import { activityDot, cleanTitle, engineBadge, engineColor } from "@/components/utils";
@@ -45,6 +46,7 @@ interface Props {
   onClose: (path: string) => void;
   onDraftClose: (id: string) => void;
   onDraftSpawned: (id: string, file: FileEntry) => void;
+  onHandoff?: (file: FileEntry) => void;
 }
 
 /**
@@ -54,7 +56,7 @@ interface Props {
  * data the scheme draws — nothing on the diagram is unreachable, it is just
  * shown one pane at a time.
  */
-export function MobileFocusView({ project, groups, manual, files, flows, drafts, focus, onSelect, onClose, onDraftClose, onDraftSpawned }: Props) {
+export function MobileFocusView({ project, groups, manual, files, flows, drafts, focus, onSelect, onClose, onDraftClose, onDraftSpawned, onHandoff }: Props) {
   const { t } = useLocale();
   const [focusPath, setFocusPath] = useState<string | null>(null);
   const [mapOpen, setMapOpen] = useState(false);
@@ -106,8 +108,12 @@ export function MobileFocusView({ project, groups, manual, files, flows, drafts,
   }, [focusPath, byKey, entries]);
 
   useEffect(() => {
-    if (resolvedKey) sessionStorage.setItem(focusKey(project), resolvedKey);
-  }, [resolvedKey, project]);
+    if (focusPath && byKey.has(focusPath)) {
+      sessionStorage.setItem(focusKey(project), focusPath);
+    } else if (!focusPath && resolvedKey) {
+      sessionStorage.setItem(focusKey(project), resolvedKey);
+    }
+  }, [focusPath, byKey, resolvedKey, project]);
 
   useEffect(() => {
     activeChipRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -179,16 +185,18 @@ export function MobileFocusView({ project, groups, manual, files, flows, drafts,
 
       <div className="relative flex min-h-0 flex-1 flex-col p-1.5 pb-[max(0.375rem,env(safe-area-inset-bottom))]">
         {activeNode ? (
-          <BranchPane
-            key={activeNode.file.path}
-            file={activeNode.file}
-            tasks={activeNode.tasks}
-            files={files}
-            onSelect={onSelect}
-            isRoot={activeNode.isRoot}
-            onClose={() => onClose(activeNode.file.path)}
-            dragHandle={swipeHandle}
-          />
+          <div key={activeNode.file.path} className="relative flex min-h-0 flex-1">
+            <BranchPane
+              file={activeNode.file}
+              tasks={activeNode.tasks}
+              files={files}
+              onSelect={onSelect}
+              isRoot={activeNode.isRoot}
+              onClose={() => onClose(activeNode.file.path)}
+              dragHandle={swipeHandle}
+            />
+            {onHandoff && canHandoff(activeNode.file) ? <HandoffHandle file={activeNode.file} onHandoff={() => onHandoff(activeNode.file)} /> : null}
+          </div>
         ) : activeDraft ? (
           <DraftAgentPane
             key={activeDraft.key}

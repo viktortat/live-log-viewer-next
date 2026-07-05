@@ -7,6 +7,7 @@ import { useArchivedPaths } from "@/hooks/useArchivedPaths";
 import { useTimeline } from "@/hooks/useTimeline";
 import { useSwitchboardData, type SwitchboardItem } from "@/hooks/useSwitchboardData";
 import type { Flow } from "@/lib/flows/types";
+import { useLocale } from "@/lib/i18n";
 import { cleanTitle } from "@/lib/title";
 import type { FileEntry } from "@/lib/types";
 
@@ -74,6 +75,7 @@ function Section({
 }
 
 export function Switchboard({ files, flows, project, onOpenFile }: Props) {
+  const { t } = useLocale();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [olderOpen, setOlderOpen] = useState(false);
@@ -125,38 +127,38 @@ export function Switchboard({ files, flows, project, onOpenFile }: Props) {
             className="flex h-[95vh] w-[95vw] flex-col overflow-hidden rounded-[8px] border border-line bg-bg shadow-[0_18px_70px_rgb(20_20_30/0.28)]"
             role="dialog"
             aria-modal="true"
-            aria-label="Пульт агентів"
+            aria-label={t("switch.aria")}
             onMouseDown={(event) => event.stopPropagation()}
           >
             <header className="flex h-14 shrink-0 items-center gap-3 border-b border-line bg-panel px-4">
-              <div className="text-[15px] font-bold">Пульт</div>
+              <div className="text-[15px] font-bold">{t("switch.title")}</div>
               <input
                 ref={inputRef}
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Пошук за назвою або проєктом"
+                placeholder={t("switch.search")}
                 className="h-9 min-w-0 flex-1 rounded-[8px] border border-line bg-bg px-3 text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
               />
-              {timeline.loading ? <span className="text-[11px] font-semibold text-dim">оновлення…</span> : null}
+              {timeline.loading ? <span className="text-[11px] font-semibold text-dim">{t("switch.updating")}</span> : null}
               <button
                 className="inline-flex h-8 w-8 items-center justify-center rounded-[8px] border border-line bg-bg text-dim hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-                aria-label="Закрити пульт"
+                aria-label={t("switch.close")}
                 onClick={() => setOpen(false)}
               >
                 <X className="h-4 w-4" aria-hidden />
               </button>
             </header>
             <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-4">
-              <Section title="Чекає тебе" items={data.waiting} size="large" currentProject={project} onOpenFile={openFile} onArchive={archiveFile} />
-              <Section title="Працюють" items={data.working} size="large" currentProject={project} onOpenFile={openFile} onArchive={archiveFile} />
-              <Section title="Нещодавні" items={data.recent} size="small" currentProject={project} onOpenFile={openFile} onArchive={archiveFile} />
+              <Section title={t("switch.waiting")} items={data.waiting} size="large" currentProject={project} onOpenFile={openFile} onArchive={archiveFile} />
+              <Section title={t("switch.working")} items={data.working} size="large" currentProject={project} onOpenFile={openFile} onArchive={archiveFile} />
+              <Section title={t("switch.recent")} items={data.recent} size="small" currentProject={project} onOpenFile={openFile} onArchive={archiveFile} />
               <section className="shrink-0">
                 <button
                   className="flex h-10 w-full items-center justify-between rounded-[8px] border border-line bg-panel px-3 text-left text-[12.5px] font-bold hover:border-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
                   aria-expanded={olderOpen}
                   onClick={() => setOlderOpen((value) => !value)}
                 >
-                  <span>Старіше</span>
+                  <span>{t("switch.older")}</span>
                   <span className="text-dim">{data.older.length}</span>
                 </button>
                 {olderOpen ? (
@@ -166,7 +168,7 @@ export function Switchboard({ files, flows, project, onOpenFile }: Props) {
                 ) : null}
               </section>
               {!data.waiting.length && !data.working.length && !data.recent.length && !data.older.length ? (
-                <div className="pt-[18vh] text-center text-[13px] font-semibold text-dim">Нічого не знайдено</div>
+                <div className="pt-[18vh] text-center text-[13px] font-semibold text-dim">{t("common.nothingFound")}</div>
               ) : null}
               {archivedItems.length ? (
                 <section className="shrink-0">
@@ -175,8 +177,8 @@ export function Switchboard({ files, flows, project, onOpenFile }: Props) {
                     aria-expanded={archivedOpen}
                     onClick={() => setArchivedOpen((value) => !value)}
                   >
-                    <span>Приховані ({archivedItems.length})</span>
-                    <span>{archivedOpen ? "сховати" : "показати"}</span>
+                    <span>{t("switch.hidden", { count: archivedItems.length })}</span>
+                    <span>{archivedOpen ? t("switch.hide") : t("common.show")}</span>
                   </button>
                   {archivedOpen ? (
                     <div className="mt-2 space-y-1">
@@ -191,7 +193,7 @@ export function Switchboard({ files, flows, project, onOpenFile }: Props) {
                             className="shrink-0 rounded-full border border-line bg-bg px-2 py-0.5 text-[10.5px] font-semibold text-ink hover:border-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
                             onClick={() => unarchive(item.file.path)}
                           >
-                            повернути
+                            {t("switch.restore")}
                           </button>
                         </div>
                       ))}

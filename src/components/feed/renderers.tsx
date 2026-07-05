@@ -12,6 +12,7 @@ import {
   type ReviewCardItem,
   type ReviewSeverity,
 } from "@/lib/review";
+import { getLocale, translate } from "@/lib/i18n";
 import type { FileEntry } from "@/lib/types";
 
 import {
@@ -29,9 +30,13 @@ import {
   Sparkle,
   X,
 } from "../icons";
-import { hhmm, ukPlural } from "../utils";
+import { hhmm } from "../utils";
 import { InboxImageCard } from "./InboxImage";
 import { Lightbox } from "./Lightbox";
+
+/* Feed labels resolve against the active locale at build/render time; a locale
+   flip rebuilds the feed (see LogFeed's memo), so cached items re-localize. */
+const tr = (key: Parameters<typeof translate>[1], params?: Parameters<typeof translate>[2]) => translate(getLocale(), key, params);
 
 type Call = { cmd: string; display: string; output: string; status: "run" | "ok" | "err"; label: string; icon: GlyphName; open: boolean };
 type CitationEntry = {
@@ -151,7 +156,7 @@ function sysMsgLabel(text: string): string {
   const tag = text.match(/^\s*<([a-zA-Z][\w:-]*)/)?.[1];
   if (tag) return tag;
   if (/^\s*Caveat:/.test(text)) return "caveat";
-  return "системне";
+  return tr("render.system");
 }
 
 function tmsgAttr(attrs: string, name: string): string {
@@ -362,7 +367,7 @@ function displayCmd(cmd: string): string {
 
 function newCmd(cmd: string, icon: GlyphName = "shell"): Call {
   const redacted = redactSecrets(cmd);
-  return { cmd: redacted, display: displayCmd(redacted), icon, output: "", status: "run", label: "виконується…", open: false };
+  return { cmd: redacted, display: displayCmd(redacted), icon, output: "", status: "run", label: tr("render.executing"), open: false };
 }
 
 function attach(call: Call | undefined, output: string, errFlag?: boolean) {
@@ -375,7 +380,7 @@ function attach(call: Call | undefined, output: string, errFlag?: boolean) {
     .trim();
   const isErr = errFlag === true || (code !== undefined && code !== "0");
   call.status = isErr ? "err" : "ok";
-  call.label = isErr ? (code && code !== "0" ? "exit " + code : "помилка") : "ok";
+  call.label = isErr ? (code && code !== "0" ? "exit " + code : tr("render.error")) : "ok";
   call.open ||= isErr;
   if (body) {
     const limit = isErr ? 60_000 : 12_000;
@@ -563,7 +568,7 @@ export function buildFeed(file: FileEntry, lines: string[], showSvc: boolean, li
      idle_notification JSON bodies collapse to a thin service-style row. */
   const addUserText = (ts: unknown, text: string) => {
     const rest = text.replace(TMSG_RE, (_whole, _tag: string, attrs: string, body: string) => {
-      const peer = tmsgAttr(attrs, "teammate_id") || tmsgAttr(attrs, "from") || "тімейт";
+      const peer = tmsgAttr(attrs, "teammate_id") || tmsgAttr(attrs, "from") || tr("render.teammate");
       const summary = tmsgAttr(attrs, "summary");
       const trimmed = body.trim();
       if (trimmed.startsWith("{")) {
@@ -571,7 +576,7 @@ export function buildFeed(file: FileEntry, lines: string[], showSvc: boolean, li
           const obj = JSON.parse(trimmed) as Record<string, unknown>;
           if (obj.type === "idle_notification") {
             const at = hhmm(obj.timestamp);
-            items.push({ kind: "tnote", text: `${peer}: звільнився${at ? " · " + at : ""}` });
+            items.push({ kind: "tnote", text: tr("render.left", { peer, at: at ? " · " + at : "" }) });
             return "";
           }
         } catch {
@@ -608,7 +613,7 @@ export function buildFeed(file: FileEntry, lines: string[], showSvc: boolean, li
     const p = rec(obj.payload);
     const ts = obj.timestamp;
     if (obj.type === "session_meta") {
-      return addNote(`Сесія Codex створена · ${textPart(p.model)} · ${textPart(p.cwd)}`);
+      return addNote(`${tr("render.codexSessionCreated")} · ${textPart(p.model)} · ${textPart(p.cwd)}`);
     }
     if (obj.type === "event_msg") {
       if (p.type === "agent_message" && p.message) return addProse(ts, textPart(p.message));
@@ -617,8 +622,8 @@ export function buildFeed(file: FileEntry, lines: string[], showSvc: boolean, li
         if (SYS_MSG_RE.test(text)) return items.push({ kind: "sysmsg", label: sysMsgLabel(text), text });
         return addPlainUser(ts, text);
       }
-      if (p.type === "task_started") return addNote("Задача стартувала" + (ts ? " · " + hhmm(ts) : ""));
-      if (p.type === "task_complete") return addNote("Задачу завершено" + (ts ? " · " + hhmm(ts) : ""));
+      if (p.type === "task_started") return addNote(tr("render.taskStarted") + (ts ? " · " + hhmm(ts) : ""));
+      if (p.type === "task_complete") return addNote(tr("render.taskComplete") + (ts ? " · " + hhmm(ts) : ""));
       return addSvc(textPart(p.type) || "event");
     }
     if (obj.type === "response_item") {
@@ -643,10 +648,10 @@ export function buildFeed(file: FileEntry, lines: string[], showSvc: boolean, li
         }
         if (name === "apply_patch") {
           const files = String(args.input ?? "").match(/(Add|Update|Delete) File: [^\n]+/g);
-          items.push({ kind: "edit", files: files ? files.join(", ").replace(/(Add|Update|Delete) File: /g, "") : "патч" });
+          items.push({ kind: "edit", files: files ? files.join(", ").replace(/(Add|Update|Delete) File: /g, "") : tr("render.patch") });
           return;
         }
-        if (name === "write_stdin") return addSvc("stdin → сесія " + String(args.session_id ?? ""));
+        if (name === "write_stdin") return addSvc(tr("render.stdinSession", { id: String(args.session_id ?? "") }));
         return addCmd(ts, name + " " + JSON.stringify(args).slice(0, 120), textPart(p.call_id), "tool");
       }
       if (p.type === "function_call_output") return addOutput(textPart(p.call_id), typeof p.output === "string" ? p.output : JSON.stringify(p.output ?? ""));
@@ -655,14 +660,14 @@ export function buildFeed(file: FileEntry, lines: string[], showSvc: boolean, li
          JSON-encoded string), so no JSON.parse step is needed here. */
       if (p.type === "custom_tool_call" && textPart(p.name) === "apply_patch") {
         const files = textPart(p.input).match(/(Add|Update|Delete) File: [^\n]+/g);
-        items.push({ kind: "edit", files: files ? files.join(", ").replace(/(Add|Update|Delete) File: /g, "") : "патч" });
+        items.push({ kind: "edit", files: files ? files.join(", ").replace(/(Add|Update|Delete) File: /g, "") : tr("render.patch") });
         return;
       }
       if (p.type === "custom_tool_call_output") return addOutput(textPart(p.call_id), typeof p.output === "string" ? p.output : JSON.stringify(p.output ?? ""));
       if (p.type === "reasoning") return addSvc("reasoning");
       return addSvc(textPart(p.type) || "item");
     }
-    addSvc(textPart(obj.type) || "запис");
+    addSvc(textPart(obj.type) || tr("render.record"));
   };
   const renderClaude = (obj: Record<string, unknown>) => {
     const ts = obj.timestamp;
@@ -713,7 +718,7 @@ export function buildFeed(file: FileEntry, lines: string[], showSvc: boolean, li
             for (const cite of cites) items.push(cite);
             if (textPart(part.id)) tmsgs.set(textPart(part.id), item);
           } else {
-            addSvc(`SendMessage → ${String(input.to ?? "")} · ${textPart(rec(message).type) || "протокол"}`);
+            addSvc(`SendMessage → ${String(input.to ?? "")} · ${textPart(rec(message).type) || tr("render.protocol")}`);
           }
         } else if (part.type === "tool_use") {
           const input = rec(part.input);
@@ -723,7 +728,7 @@ export function buildFeed(file: FileEntry, lines: string[], showSvc: boolean, li
       }
       return;
     }
-    addSvc(textPart(obj.type) || "запис");
+    addSvc(textPart(obj.type) || tr("render.record"));
   };
   /* Job .output logs echo the final review/citation block as bare lines after the
      [codex] stream ends; collect that run so it renders as one structured card
@@ -765,7 +770,7 @@ export function buildFeed(file: FileEntry, lines: string[], showSvc: boolean, li
     if (/^Command (completed|failed)/.test(rest)) {
       const last = [...calls.values()].at(-1);
       if (last) {
-        attach(last, /^Command failed/.test(rest) ? rest + "\n(це джоб-лог: він не містить stdout команд; повний вивід — у rollout-сесії Codex у списку зліва)" : rest, /^Command failed/.test(rest));
+        attach(last, /^Command failed/.test(rest) ? rest + "\n" + tr("render.jobLogNote") : rest, /^Command failed/.test(rest));
       }
       return;
     }
@@ -798,7 +803,7 @@ export function ImageCard({ media, data, w, h, bytes }: { media: string; data: s
   /* Screenshots carry the story of an agent run, so they open as thumbnails right away. */
   const [view, setView] = useState<ImageView>("thumb");
   const kb = Math.round((bytes ?? (data.length * 3) / 4) / 1024);
-  const dims = w && h ? `${w}×${h}` : "зображення";
+  const dims = w && h ? `${w}×${h}` : tr("render.image");
   if (view === "chip") {
     return (
       <button
@@ -810,8 +815,8 @@ export function ImageCard({ media, data, w, h, bytes }: { media: string; data: s
           <GlyphIcon name="image" className="h-4 w-4" />
         </span>
         <span className="font-semibold">{dims}</span>
-        <span className="text-dim">· {kb} КБ</span>
-        <span className="ml-1 text-[12px] font-semibold text-accent">показати</span>
+        <span className="text-dim">· {kb} {tr("common.kb")}</span>
+        <span className="ml-1 text-[12px] font-semibold text-accent">{tr("common.show")}</span>
       </button>
     );
   }
@@ -822,15 +827,15 @@ export function ImageCard({ media, data, w, h, bytes }: { media: string; data: s
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src={src}
-        alt={`зображення ${dims}`}
+        alt={`${tr("render.image")} ${dims}`}
         onClick={() => setView("full")}
         className="max-h-[240px] cursor-zoom-in rounded-[14px] border border-line"
       />
       <button type="button" onClick={() => setView("chip")} className="mt-1 block text-[12px] text-dim">
-        згорнути
+        {tr("common.collapse")}
       </button>
       {view === "full" ? (
-        <Lightbox src={src} alt={`зображення ${dims}`} caption={`${dims} · ${kb} КБ`} onClose={() => setView("thumb")} />
+        <Lightbox src={src} alt={`${tr("render.image")} ${dims}`} caption={`${dims} · ${kb} ${tr("common.kb")}`} onClose={() => setView("thumb")} />
       ) : null}
     </div>
   );
@@ -838,7 +843,7 @@ export function ImageCard({ media, data, w, h, bytes }: { media: string; data: s
 
 /** Harness/system turn folded into a thin expandable row: label + size, full text on demand. */
 export function SysMsgCard({ label, text }: { label: string; text: string }) {
-  const kb = text.length >= 2048 ? `${(text.length / 1024).toFixed(1)} кБ` : `${text.length} симв.`;
+  const kb = text.length >= 2048 ? `${(text.length / 1024).toFixed(1)} ${tr("common.kb")}` : tr("common.chars", { n: text.length });
   return (
     <details className="group my-1.5 ml-9">
       <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[11px] font-semibold text-dim hover:text-ink [&::-webkit-details-marker]:hidden">
@@ -846,9 +851,9 @@ export function SysMsgCard({ label, text }: { label: string; text: string }) {
           <GlyphIcon name="cmd-group" className="h-3 w-3" />
         </span>
         <span className="rounded-full bg-chip px-1.5 py-0.5 font-mono text-[9.5px]">{label}</span>
-        <span>системне · {kb}</span>
-        <span className="text-accent group-open:hidden">показати</span>
-        <span className="hidden text-dim group-open:inline">згорнути</span>
+        <span>{tr("render.system")} · {kb}</span>
+        <span className="text-accent group-open:hidden">{tr("common.show")}</span>
+        <span className="hidden text-dim group-open:inline">{tr("common.collapse")}</span>
       </summary>
       <pre className="mt-1 max-h-[320px] overflow-auto whitespace-pre-wrap break-words rounded-[10px] border border-line bg-bg px-3 py-2 font-mono text-[11px] text-[#555]">
         {text}
@@ -870,8 +875,8 @@ export function BlobCard({ bytes, text }: { bytes: number; text: string }) {
         <span className="flex h-6.5 w-6.5 items-center justify-center rounded-lg bg-chip">
           <GlyphIcon name="blob" className="h-4 w-4" />
         </span>
-        <span className="font-semibold">даних {kb} КБ</span>
-        <span className="ml-1 text-[12px] font-semibold text-accent">показати</span>
+        <span className="font-semibold">{tr("render.dataKb", { n: kb })}</span>
+        <span className="ml-1 text-[12px] font-semibold text-accent">{tr("common.show")}</span>
       </button>
     );
   }
@@ -881,7 +886,7 @@ export function BlobCard({ bytes, text }: { bytes: number; text: string }) {
         {text}
       </pre>
       <button type="button" onClick={() => setOpen(false)} className="block w-full border-t border-line px-3.5 py-1.5 text-[12px] text-dim">
-        згорнути
+        {tr("common.collapse")}
       </button>
     </div>
   );
@@ -953,7 +958,7 @@ function CmdGroupCard({ item }: { item: CmdGroupItem }) {
           <GlyphIcon name="cmd-group" className="h-4 w-4" />
         </span>
         <span className="flex min-w-0 flex-1 items-center gap-1 truncate text-[12.5px]">
-          {item.calls.length} {ukPlural(item.calls.length, "команда", "команди", "команд")}
+          {tr("render.commands", { count: item.calls.length })}
           {tools ? " · " + tools : ""} ·
           <span className="inline-flex items-center gap-0.5 text-ok">
             <Check className="h-3.5 w-3.5" aria-hidden />
@@ -1012,7 +1017,7 @@ function ReviewCard({ item }: { item: ReviewCardItem }) {
           </span>
         ) : null}
         <span className="text-[11px] text-dim">
-          {findingCount ? `${findingCount} finding${findingCount === 1 ? "" : "s"}` : "без findings"}
+          {findingCount ? `${findingCount} finding${findingCount === 1 ? "" : "s"}` : tr("render.noFindings")}
         </span>
         {hhmm(item.ts) ? <span className="ml-auto text-[11px] text-dim">{hhmm(item.ts)}</span> : null}
       </div>
@@ -1042,7 +1047,7 @@ function ReviewCard({ item }: { item: ReviewCardItem }) {
           </div>
         ) : null}
         {item.findings.length > visibleFindings.length ? (
-          <div className="mt-2 text-[12px] text-dim">ще {item.findings.length - visibleFindings.length} findings у raw</div>
+          <div className="mt-2 text-[12px] text-dim">{tr("render.moreFindings", { count: item.findings.length - visibleFindings.length })}</div>
         ) : null}
         <details className="mt-2 rounded-[10px] border border-line bg-[#fafafc] text-[12px]">
           <summary className="cursor-pointer list-none px-3 py-1.5 font-semibold text-dim">raw review text</summary>
@@ -1064,9 +1069,9 @@ function MemCitationCard({ item }: { item: MemCitationItem }) {
         <span className="flex h-6.5 w-6.5 shrink-0 items-center justify-center rounded-lg bg-chip">
           <GlyphIcon name="citation" className="h-4 w-4" />
         </span>
-        <span className="text-[13px] font-semibold">цитати пам&apos;яті ({item.entries.length})</span>
-        <span className="ml-auto text-[11px] font-semibold text-accent group-open:hidden">показати</span>
-        <span className="ml-auto hidden text-[11px] font-semibold text-accent group-open:inline">згорнути</span>
+        <span className="text-[13px] font-semibold">{tr("render.memoryCitations", { count: item.entries.length })}</span>
+        <span className="ml-auto text-[11px] font-semibold text-accent group-open:hidden">{tr("common.show")}</span>
+        <span className="ml-auto hidden text-[11px] font-semibold text-accent group-open:inline">{tr("common.collapse")}</span>
       </summary>
       <div className="border-t border-line px-3.5 py-2.5">
         {visibleEntries.length ? (
@@ -1079,10 +1084,10 @@ function MemCitationCard({ item }: { item: MemCitationItem }) {
             ))}
           </div>
         ) : (
-          <div className="text-[12px] text-dim">без citation entries</div>
+          <div className="text-[12px] text-dim">{tr("render.noCitations")}</div>
         )}
         {item.entries.length > visibleEntries.length ? (
-          <div className="mt-1.5 text-[12px] text-dim">ще {item.entries.length - visibleEntries.length} entries у raw</div>
+          <div className="mt-1.5 text-[12px] text-dim">{tr("render.moreEntries", { count: item.entries.length - visibleEntries.length })}</div>
         ) : null}
         {visibleIds.length ? (
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
@@ -1097,7 +1102,7 @@ function MemCitationCard({ item }: { item: MemCitationItem }) {
         ) : null}
         <details className="mt-2 rounded-[10px] border border-line bg-[#fafafc] text-[12px]">
           <summary className="cursor-pointer list-none px-3 py-1.5 font-semibold text-dim">
-            raw citation block{item.truncated ? " · обрізано" : ""}
+            raw citation block{item.truncated ? " · " + tr("render.truncated") : ""}
           </summary>
           <pre className="max-h-[260px] overflow-auto whitespace-pre-wrap border-t border-line px-3 py-2 font-mono text-[11.5px] text-[#555]">
             {item.raw}
@@ -1110,11 +1115,11 @@ function MemCitationCard({ item }: { item: MemCitationItem }) {
 
 type ProtocolPayload = Record<string, unknown>;
 
-const PROTOCOL_TYPE_META: Record<string, { icon: GlyphName; label: string; tone: "amber" | "accent" }> = {
-  shutdown_request: { icon: "shutdown", label: "запит на завершення", tone: "amber" },
-  shutdown_response: { icon: "shutdown", label: "відповідь на завершення", tone: "amber" },
-  plan_approval_request: { icon: "plan", label: "запит на затвердження плану", tone: "accent" },
-  plan_approval_response: { icon: "plan", label: "вердикт по плану", tone: "accent" },
+const PROTOCOL_TYPE_META: Record<string, { icon: GlyphName; labelKey: Parameters<typeof translate>[1]; tone: "amber" | "accent" }> = {
+  shutdown_request: { icon: "shutdown", labelKey: "render.shutdownRequest", tone: "amber" },
+  shutdown_response: { icon: "shutdown", labelKey: "render.shutdownResponse", tone: "amber" },
+  plan_approval_request: { icon: "plan", labelKey: "render.planRequest", tone: "accent" },
+  plan_approval_response: { icon: "plan", labelKey: "render.planVerdict", tone: "accent" },
 };
 
 function protocolToneClass(tone: "amber" | "accent"): string {
@@ -1146,7 +1151,7 @@ function asProtocolString(value: unknown): string | undefined {
 function ApproveChip({ approve }: { approve: boolean }) {
   return (
     <span className={`rounded-full border px-2 py-0.5 text-[10.5px] font-extrabold ${approve ? "border-ok/25 bg-[#eefaf1] text-ok" : "border-err/25 bg-[#fff0f0] text-err"}`}>
-      {approve ? "схвалено" : "відхилено"}
+      {approve ? tr("render.approved") : tr("render.rejected")}
     </span>
   );
 }
@@ -1158,7 +1163,7 @@ function ProtocolMeta({ payload }: { payload: ProtocolPayload }) {
   if (!from && !requestId && !ts) return null;
   return (
     <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] text-dim">
-      {from ? <span>від {from}</span> : null}
+      {from ? <span>{tr("render.from", { from })}</span> : null}
       {requestId ? (
         <span className="truncate font-mono" title={requestId}>
           {requestId.length > 40 ? requestId.slice(0, 40) + "…" : requestId}
@@ -1175,9 +1180,9 @@ function ProtocolMessageBody({ payload }: { payload: ProtocolPayload }) {
   if (!meta) {
     return (
       <div className="text-[13px]">
-        <div className="text-dim">структуроване повідомлення</div>
+        <div className="text-dim">{tr("render.structured")}</div>
         <details className="mt-1 text-[12px]">
-          <summary className="cursor-pointer list-none font-semibold text-accent">показати JSON</summary>
+          <summary className="cursor-pointer list-none font-semibold text-accent">{tr("render.showJson")}</summary>
           <pre className="mt-1 max-h-[280px] overflow-auto whitespace-pre-wrap rounded-md bg-chip px-2.5 py-2 font-mono text-[11.5px]">
             {JSON.stringify(payload, null, 2)}
           </pre>
@@ -1192,7 +1197,7 @@ function ProtocolMessageBody({ payload }: { payload: ProtocolPayload }) {
       <div className="flex flex-wrap items-center gap-2">
         <span className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[11.5px] font-bold ${protocolToneClass(meta.tone)}`}>
           <GlyphIcon name={meta.icon} className="h-3.5 w-3.5" />
-          {meta.label}
+          {tr(meta.labelKey)}
         </span>
         {approve !== undefined ? <ApproveChip approve={approve} /> : null}
       </div>
@@ -1236,10 +1241,10 @@ export const FeedItem = memo(function FeedItem({ item }: { item: Item }) {
             <details className="group/usr">
               <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">
                 <span className="group-open/usr:hidden">
-                  {item.text.slice(0, 180)}… <span className="font-semibold text-accent">({item.text.length} симв.)</span>
+                  {item.text.slice(0, 180)}… <span className="font-semibold text-accent">({tr("common.chars", { n: item.text.length })})</span>
                 </span>
                 <span className="hidden items-center gap-1 text-[11px] font-semibold text-dim group-open/usr:inline-flex">
-                  згорнути <ChevronUp className="h-3 w-3" aria-hidden />
+                  {tr("common.collapse")} <ChevronUp className="h-3 w-3" aria-hidden />
                 </span>
               </summary>
               {mdBlocks(item.text)}
@@ -1266,7 +1271,7 @@ export const FeedItem = memo(function FeedItem({ item }: { item: Item }) {
           </span>
         </summary>
         <pre className="max-h-[340px] overflow-auto whitespace-pre-wrap border-t border-line bg-[#fafafc] px-3.5 py-2.5 font-mono text-[12.5px]">
-          {"$ " + item.call.cmd + (item.call.output ? "\n" + item.call.output : "\n(вивід у цьому лог-файлі відсутній — повний є в rollout-сесії Codex)")}
+          {"$ " + item.call.cmd + (item.call.output ? "\n" + item.call.output : "\n" + tr("render.noOutputInLog"))}
         </pre>
       </details>
     );
@@ -1280,7 +1285,7 @@ export const FeedItem = memo(function FeedItem({ item }: { item: Item }) {
         </span>
         <div>
           <div className="text-[13.5px] font-semibold">{item.files}</div>
-          <div className="text-xs text-dim">файли змінені</div>
+          <div className="text-xs text-dim">{tr("render.filesChanged")}</div>
         </div>
       </div>
     );
@@ -1294,7 +1299,7 @@ export const FeedItem = memo(function FeedItem({ item }: { item: Item }) {
           <span className="flex h-6.5 w-6.5 shrink-0 items-center justify-center rounded-lg bg-[#ecebfb] text-accent">
             <Mail className="h-3.5 w-3.5" aria-hidden />
           </span>
-          <span className="text-[11px] font-semibold text-dim">{item.dir === "out" ? "до" : "від"}</span>
+          <span className="text-[11px] font-semibold text-dim">{item.dir === "out" ? tr("render.toDir") : tr("render.fromDir")}</span>
           <span className="rounded-full bg-accent/10 px-2 py-0.5 text-[11px] font-bold text-accent">{item.peer}</span>
           {item.delivery ? (
             <span
@@ -1302,7 +1307,7 @@ export const FeedItem = memo(function FeedItem({ item }: { item: Item }) {
               title={item.msgId ? `msg_id: ${item.msgId}` : undefined}
             >
               {item.delivery === "ok" ? <Check className="h-3 w-3" aria-hidden /> : <X className="h-3 w-3" aria-hidden />}
-              {item.delivery === "ok" ? "доставлено" : "не доставлено"}
+              {item.delivery === "ok" ? tr("render.delivered") : tr("render.notDelivered")}
             </span>
           ) : null}
           {hhmm(item.ts) ? <span className="ml-auto shrink-0 text-[11px] text-dim">{hhmm(item.ts)}</span> : null}
@@ -1317,10 +1322,10 @@ export const FeedItem = memo(function FeedItem({ item }: { item: Item }) {
                 <details className="group/tmsg mt-0.5 whitespace-pre-wrap break-words text-[13px]">
                   <summary className="cursor-pointer list-none text-[12.5px] text-[#555] [&::-webkit-details-marker]:hidden">
                     <span className="group-open/tmsg:hidden">
-                      {item.text.slice(0, 260).trimEnd()}… <span className="font-semibold text-accent">показати все</span>
+                      {item.text.slice(0, 260).trimEnd()}… <span className="font-semibold text-accent">{tr("common.showAll")}</span>
                     </span>
                     <span className="hidden items-center gap-1 text-[11px] font-semibold text-dim group-open/tmsg:inline-flex">
-                      згорнути <ChevronUp className="h-3 w-3" aria-hidden />
+                      {tr("common.collapse")} <ChevronUp className="h-3 w-3" aria-hidden />
                     </span>
                   </summary>
                   {mdBlocks(item.text)}
@@ -1346,7 +1351,7 @@ export const FeedItem = memo(function FeedItem({ item }: { item: Item }) {
     const long = item.text.length > 150;
     return (
       <details className="my-1 ml-9 text-[11.5px] italic text-dim">
-        <summary className={`flex list-none items-center gap-1.5 truncate ${long ? "cursor-pointer" : ""}`} title="міркування агента">
+        <summary className={`flex list-none items-center gap-1.5 truncate ${long ? "cursor-pointer" : ""}`} title={tr("render.reasoning")}>
           <Brain className="h-3.5 w-3.5 shrink-0" aria-hidden />
           <span className="truncate">
             {item.text.slice(0, 150)}

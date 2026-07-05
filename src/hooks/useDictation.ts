@@ -133,6 +133,11 @@ export function useDictation({ onError, onUnclaimedText, onLiveCommit }: UseDict
   const meterRef = useRef<{ ctx: AudioContext; raf: number } | null>(null);
   const pendingRef = useRef<((text: string | null) => void) | null>(null);
   const startingRef = useRef(false);
+  const mountedRef = useRef(true);
+
+  const stopStream = (stream: MediaStream | null) => {
+    stream?.getTracks().forEach((track) => track.stop());
+  };
 
   const stopTimer = () => {
     if (timerRef.current !== null) {
@@ -214,6 +219,7 @@ export function useDictation({ onError, onUnclaimedText, onLiveCommit }: UseDict
 
   useEffect(() => {
     return () => {
+      mountedRef.current = false;
       stopTimer();
       stopMeter();
       discardRef.current = true;
@@ -339,7 +345,6 @@ export function useDictation({ onError, onUnclaimedText, onLiveCommit }: UseDict
           msg.message_type === "quota_exceeded"
         ) {
           onError(msg.error || t("dictation.liveError"));
-          discardRef.current = true;
           finishLive(live);
           return;
         }
@@ -365,46 +370,55 @@ export function useDictation({ onError, onUnclaimedText, onLiveCommit }: UseDict
        wait would spin up a second recorder over the first and leak its stream. */
     if (startingRef.current || recRef.current || liveRef.current) return;
     startingRef.current = true;
-    let stream: MediaStream;
+    let stream: MediaStream | null = null;
+    let streamOwned = true;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 } });
-    } catch {
-      onError(t("dictation.noMic"));
-      startingRef.current = false;
-      return;
-    }
-    discardRef.current = false;
-    setLiveText("");
+      if (!mountedRef.current) return;
+      discardRef.current = false;
+      setLiveText("");
 
-    const token = await fetchLiveToken();
-    const liveStarted = token !== null && startLive(stream, token);
-    if (!liveStarted) {
-      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm";
-      const rec = new MediaRecorder(stream, { mimeType });
-      chunksRef.current = [];
-      rec.ondataavailable = (event) => {
-        if (event.data.size) chunksRef.current.push(event.data);
-      };
-      rec.onstop = () => {
-        void finishBatch();
-      };
-      rec.start(250);
-      recRef.current = rec;
+      const token = await fetchLiveToken();
+      if (!mountedRef.current || discardRef.current) return;
+
+      const liveStarted = token !== null && startLive(stream, token);
+      if (!liveStarted) {
+        const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+          ? "audio/webm;codecs=opus"
+          : MediaRecorder.isTypeSupported("audio/webm")
+            ? "audio/webm"
+            : "";
+        const rec = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+        chunksRef.current = [];
+        rec.ondataavailable = (event) => {
+          if (event.data.size) chunksRef.current.push(event.data);
+        };
+        rec.onstop = () => {
+          void finishBatch();
+        };
+        rec.start(250);
+        recRef.current = rec;
+      }
+      streamOwned = false;
+      startMeter(stream);
+      setElapsed(0);
+      setPhase("rec");
+      timerRef.current = window.setInterval(() => {
+        setElapsed((seconds) => {
+          const next = seconds + 1;
+          if (next >= MAX_SECONDS) {
+            if (recRef.current?.state === "recording") recRef.current.stop();
+            else if (liveRef.current) finishLive(liveRef.current);
+          }
+          return next;
+        });
+      }, 1_000);
+    } catch {
+      if (mountedRef.current) onError(stream ? t("dictation.unsupported") : t("dictation.noMic"));
+    } finally {
+      if (streamOwned) stopStream(stream);
+      startingRef.current = false;
     }
-    startingRef.current = false;
-    startMeter(stream);
-    setElapsed(0);
-    setPhase("rec");
-    timerRef.current = window.setInterval(() => {
-      setElapsed((seconds) => {
-        const next = seconds + 1;
-        if (next >= MAX_SECONDS) {
-          if (recRef.current?.state === "recording") recRef.current.stop();
-          else if (liveRef.current) finishLive(liveRef.current);
-        }
-        return next;
-      });
-    }, 1_000);
   };
 
   const stop = (): Promise<string | null> => {

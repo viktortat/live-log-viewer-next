@@ -5,7 +5,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { ArrowDown, ChevronUp, Sparkle } from "@/components/icons";
 import { useLogTail } from "@/hooks/useLogTail";
-import { getLocale, useLocale } from "@/lib/i18n";
+import { getLocale, translate, useLocale } from "@/lib/i18n";
 import type { FileEntry } from "@/lib/types";
 
 import { isAwaitingUser } from "@/hooks/useSwitchboardData";
@@ -22,6 +22,10 @@ const RENDER_STEP = 1500;
     the full history in steps. */
 const COMPACT_INITIAL = 300;
 const COMPACT_STEP = 500;
+/** Live-tail window while the magnet holds the bottom. Touch devices run on
+    a far smaller tab memory budget (iOS kills the renderer past it), so the
+    window shrinks there; «показати раніше» still walks the full history. */
+const TAIL_CAP = typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches ? 500 : 2500;
 
 /** Animated presence row: the agent of a live transcript is mid-turn right now. */
 function WorkingRow({ icon: Icon, label }: { icon: LucideIcon; label: string }) {
@@ -52,13 +56,13 @@ interface Props {
 }
 
 export function LogFeed({ file, files, onSelect, showSvc, lineFilter, onStatus, paused, follow, setFollow, compact = false }: Props) {
-  const { t } = useLocale();
+  const { locale, t } = useLocale();
   /* The scroll magnet lives per feed instance, so each column remembers its
      own state across polls: glued to the live tail, or released by the user. */
   const [magnet, setMagnetState] = useState(follow);
   /* Released reader must never lose lines above the viewport: the tail cap
      applies only while the magnet holds the bottom in view anyway. */
-  const tail = useLogTail(file, paused, magnet && compact ? 2500 : 0);
+  const tail = useLogTail(file, paused, magnet && compact ? TAIL_CAP : 0);
   const scroller = useRef<HTMLDivElement | null>(null);
   const content = useRef<HTMLDivElement | null>(null);
   const anchorRef = useRef<{ top: number; height: number } | null>(null);
@@ -116,10 +120,10 @@ export function LogFeed({ file, files, onSelect, showSvc, lineFilter, onStatus, 
       return;
     }
     if (hadQuestionRef.current && file.proc && file.proc !== "running") {
-      queueMicrotask(() => setEndedQuestion(t("feed.agentEnded")));
+      queueMicrotask(() => setEndedQuestion(translate(locale, "feed.agentEnded")));
       hadQuestionRef.current = false;
     }
-  }, [file?.pendingQuestion?.toolUseId, file?.proc, file]);
+  }, [file?.pendingQuestion?.toolUseId, file?.proc, file, locale]);
 
   /* buildFeed reads only engine/fmt/activity off the file: depending on those
      fields (not the object identity, which changes every /api/files poll)
@@ -127,7 +131,7 @@ export function LogFeed({ file, files, onSelect, showSvc, lineFilter, onStatus, 
   const feed = useMemo(
     () => (file ? buildFeed(file, tail.lines, showSvc, lineFilter.toLowerCase()) : { items: [], hiddenServiceCount: 0 }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [file?.path, file?.engine, file?.fmt, file?.activity, tail.lines, showSvc, lineFilter],
+    [file?.path, file?.engine, file?.fmt, file?.activity, tail.lines, showSvc, lineFilter, locale],
   );
   const hiddenLocal = Math.max(0, feed.items.length - visibleCount);
   const visibleItems = hiddenLocal ? feed.items.slice(-visibleCount) : feed.items;
@@ -204,13 +208,18 @@ export function LogFeed({ file, files, onSelect, showSvc, lineFilter, onStatus, 
     setMagnet(true, true);
   };
 
+  /* Compact panes center the floating pill: on the phone the bottom-right
+     corner belongs to the minimap chip, and a right-anchored pill merges
+     into it. */
+  const pillPos = compact ? "left-1/2 -translate-x-1/2" : "right-3";
+
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
       {file && feed.items.length ? (
         magnet ? (
           file.activity === "live" ? (
             <div
-              className={`pointer-events-none absolute bottom-2 right-3 z-10 inline-flex items-center gap-1 rounded-full bg-ok px-2 py-0.5 text-[10px] font-bold text-white shadow-card transition-transform duration-200 ${
+              className={`pointer-events-none absolute bottom-2 ${pillPos} z-10 inline-flex items-center gap-1 rounded-full bg-ok px-2 py-0.5 text-[10px] font-bold text-white shadow-card transition-transform duration-200 ${
                 pulse ? "scale-125" : "scale-100"
               }`}
             >
@@ -219,7 +228,7 @@ export function LogFeed({ file, files, onSelect, showSvc, lineFilter, onStatus, 
           ) : null
         ) : (
           <button
-            className="absolute bottom-2 right-3 z-10 inline-flex items-center gap-1 rounded-full border border-line bg-panel px-2.5 py-1 text-[11px] font-semibold text-ink shadow-card hover:border-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+            className={`absolute bottom-2 ${pillPos} z-10 inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-line bg-panel px-2.5 py-1 text-[11px] font-semibold text-ink shadow-card hover:border-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40`}
             aria-label={t("feed.backToLive")}
             onClick={jumpToTail}
           >

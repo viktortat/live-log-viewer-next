@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -45,6 +45,29 @@ const runs = new Map<string, RunningReview>();
 
 function runKey(flowId: string, round: number): string {
   return `${flowId}:${round}`;
+}
+
+function killOrphanReviewProcess(outputPath: string): void {
+  const res = spawnSync("ps", ["-eo", "pid=,args="], { encoding: "utf8" });
+  if (res.error || res.status !== 0) return;
+  for (const line of res.stdout.split("\n")) {
+    if (!line.includes(outputPath) || !/\bcodex\b/.test(line)) continue;
+    const match = /^\s*(\d+)\s+/.exec(line);
+    const pid = match ? Number(match[1]) : 0;
+    if (!Number.isInteger(pid) || pid <= 0 || pid === process.pid) continue;
+    try {
+      process.kill(pid, "SIGTERM");
+      setTimeout(() => {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          /* already gone */
+        }
+      }, 3_000).unref();
+    } catch {
+      /* already gone or not ours */
+    }
+  }
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -251,5 +274,17 @@ export function headlessReviewStatus(flowId: string, round: number): HeadlessRun
 }
 
 export function forgetHeadlessReview(flowId: string, round: number): void {
-  runs.delete(runKey(flowId, round));
+  const key = runKey(flowId, round);
+  const run = runs.get(key);
+  runs.delete(key);
+  if (!run) {
+    killOrphanReviewProcess(outputPathFor(flowId, round));
+    return;
+  }
+  if (run.result) return;
+  clearTimeout(run.timer);
+  run.child.kill("SIGTERM");
+  setTimeout(() => {
+    if (!run.result) run.child.kill("SIGKILL");
+  }, 3_000).unref();
 }

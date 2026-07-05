@@ -24,15 +24,6 @@ export function hhmm(ts: unknown): string {
   return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString(bcp47, { hour12: false });
 }
 
-/** Ukrainian plural form: ukPlural(n, "гілка", "гілки", "гілок"). */
-export function ukPlural(n: number, one: string, few: string, many: string): string {
-  const mod10 = n % 10;
-  const mod100 = n % 100;
-  if (mod10 === 1 && mod100 !== 11) return one;
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few;
-  return many;
-}
-
 /** Same activity encoding everywhere: green pulse, amber, red, gray. */
 export function activityDot(activity: FileEntry["activity"]): string {
   if (activity === "live") return "animate-pulse bg-ok";
@@ -122,7 +113,7 @@ export function effortTint(file: FileEntry): ModelTint {
 
 /** Chip tooltip carrying the raw effort value; empty keeps the chip as-is. */
 export function effortTitle(file: FileEntry): string | undefined {
-  return file.effort ? `Зусилля міркування: ${file.effort}` : undefined;
+  return file.effort ? translate(getLocale(), "util.effortTitle", { effort: file.effort }) : undefined;
 }
 
 /** Engine base tint for UI that has no FileEntry yet (e.g. the spawn dialog). */

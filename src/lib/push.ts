@@ -168,10 +168,10 @@ async function sendPush(subscription: PushSubscriptionRecord, payload: PushPaylo
 function payloadFor(entry: FileEntry): PushPayload {
   const header =
     entry.pendingQuestion?.kind === "plan"
-      ? "план на затвердження"
+      ? "plan awaiting approval"
       : entry.pendingQuestion?.questions?.[0]?.header ||
         entry.waitingInput?.menu?.question.slice(0, 120) ||
-        (entry.waitingInput ? "чекає на відповідь" : "питання");
+        (entry.waitingInput ? "waiting for an answer" : "question");
   return {
     title: `${entry.title || "Агент"} · ${entry.engine}`,
     body: header,

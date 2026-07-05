@@ -177,40 +177,40 @@ export function FlowDialog({ file, onClose }: { file: FileEntry; onClose: () => 
 
       <div className="grid grid-cols-2 gap-2">
         <label className="flex flex-col gap-1 text-[10.5px] font-semibold text-dim">
-          база діфу
+          {t("flowDialog.diffBase")}
           <select
             value={baseMode}
             className="h-8 rounded-[8px] border border-line bg-bg px-2 text-[11.5px] font-normal text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
             onChange={(event) => setBaseMode(event.target.value as "head" | "merge-base")}
           >
-            <option value="head">від поточного HEAD</option>
-            <option value="merge-base">від merge-base з main</option>
+            <option value="head">{t("flowDialog.fromHead")}</option>
+            <option value="merge-base">{t("flowDialog.fromMergeBase")}</option>
           </select>
         </label>
         <label className="flex flex-col gap-1 text-[10.5px] font-semibold text-dim">
-          ревʼюер
+          {t("flowDialog.reviewer")}
           <select
             value={reviewerMode}
             className="h-8 rounded-[8px] border border-line bg-bg px-2 text-[11.5px] font-normal text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
             onChange={(event) => setReviewerMode(event.target.value as "headless" | "pane")}
           >
-            <option value="headless">headless (без панелі)</option>
-            <option value="pane">tmux-панель</option>
+            <option value="headless">{t("flowDialog.headless")}</option>
+            <option value="pane">{t("flowDialog.tmuxPane")}</option>
           </select>
         </label>
         <label className="flex flex-col gap-1 text-[10.5px] font-semibold text-dim">
-          переходи
+          {t("flowDialog.transitions")}
           <select
             value={mode}
             className="h-8 rounded-[8px] border border-line bg-bg px-2 text-[11.5px] font-normal text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
             onChange={(event) => setMode(event.target.value as "auto" | "manual")}
           >
-            <option value="auto">авто</option>
-            <option value="manual">вручну (гейт на кожен крок)</option>
+            <option value="auto">{t("flowDialog.auto")}</option>
+            <option value="manual">{t("flowDialog.manual")}</option>
           </select>
         </label>
         <label className="flex flex-col gap-1 text-[10.5px] font-semibold text-dim">
-          ліміт раундів
+          {t("flowDialog.roundLimit")}
           <input
             type="number"
             min={1}
@@ -228,14 +228,14 @@ export function FlowDialog({ file, onClose }: { file: FileEntry; onClose: () => 
           className="rounded-[8px] border border-line bg-bg px-2.5 py-1.5 text-[11.5px] font-semibold text-dim hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
           onClick={onClose}
         >
-          Скасувати
+          {t("common.cancel")}
         </button>
         <button
           className="rounded-[8px] border border-accent bg-accent px-3 py-1.5 text-[12px] font-bold text-white hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:opacity-40"
           disabled={busy}
           onClick={() => void create()}
         >
-          {busy ? "створюю…" : "▶ Запустити"}
+          {busy ? t("flowDialog.creating") : t("flowDialog.start")}
         </button>
       </div>
     </div>

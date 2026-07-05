@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useIsMobile } from "@/hooks/useIsMobile";
 import type { Flow } from "@/lib/flows/types";
+import { useLocale } from "@/lib/i18n";
 import type { FileEntry } from "@/lib/types";
 
 import { TaskStrip } from "./BranchPane";
@@ -18,7 +19,6 @@ import { ArchiveRestore } from "./icons";
 import { ArchiveProjectButton, DeleteProjectButton, QuietFileList } from "./ProjectTrash";
 import { SoundToggle } from "./SoundToggle";
 import { ResidualStrip } from "./TreeAside";
-import { ukPlural } from "./utils";
 
 /** How long an opened node keeps its highlight ring on the scheme. */
 const HIGHLIGHT_MS = 1800;
@@ -82,6 +82,7 @@ function gotoProject(project: string) {
 }
 
 export function ProjectDashboard({ files, flows, project, openNonce, archived, onArchive, onUnarchive, onMenu }: Props) {
+  const { t } = useLocale();
   const isMobile = useIsMobile();
   const highlightTimer = useRef<number | null>(null);
   const pendingFocusRef = useRef<string | null>(null);
@@ -271,13 +272,13 @@ export function ProjectDashboard({ files, flows, project, openNonce, archived, o
   const statusBits: string[] = [];
   if (liveCount) {
     statusBits.push(
-      `${liveCount} ${ukPlural(liveCount, "гілка працює", "гілки працюють", "гілок працюють")} · ${treeGroups} ${ukPlural(treeGroups, "дерево", "дерева", "дерев")}`,
+      `${t("dash.branchesLive", { count: liveCount })} · ${t("dash.trees", { count: treeGroups })}`,
     );
   } else if (treeGroups) {
-    statusBits.push(`${treeGroups} ${ukPlural(treeGroups, "нещодавня розмова", "нещодавні розмови", "нещодавніх розмов")}`);
+    statusBits.push(t("dash.recentConvos", { count: treeGroups }));
   }
   if (cards.length) {
-    statusBits.push(`${cards.length} ${ukPlural(cards.length, "тихе дерево", "тихі дерева", "тихих дерев")}`);
+    statusBits.push(t("dash.quietTrees", { count: cards.length }));
   }
 
   const visibleGroups = groups
@@ -304,14 +305,14 @@ export function ProjectDashboard({ files, flows, project, openNonce, archived, o
           <button
             type="button"
             className="-ml-1.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] border border-line bg-bg text-dim hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-            aria-label="Відкрити список проєктів"
+            aria-label={t("dash.openProjects")}
             onClick={onMenu}
           >
             <Menu className="h-4 w-4" aria-hidden />
           </button>
         ) : null}
         <h1 className="truncate text-[13.5px] font-bold">{project}</h1>
-        <span className="truncate text-[11.5px] text-dim">{statusBits.length ? statusBits.join(" · ") : "зараз нічого не працює"}</span>
+        <span className="truncate text-[11.5px] text-dim">{statusBits.length ? statusBits.join(" · ") : t("common.nothingRunning")}</span>
         <SoundToggle />
         {archived ? (
           <button
@@ -319,7 +320,7 @@ export function ProjectDashboard({ files, flows, project, openNonce, archived, o
             className="inline-flex shrink-0 items-center gap-1 rounded-full border border-line bg-bg px-2 py-0.5 text-[11px] font-semibold text-dim hover:border-accent/40 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
             onClick={() => onUnarchive(project)}
           >
-            <ArchiveRestore className="h-3 w-3" aria-hidden /> Повернути з архіву
+            <ArchiveRestore className="h-3 w-3" aria-hidden /> {t("dash.unarchive")}
           </button>
         ) : (
           <ArchiveProjectButton files={projectFiles} onArchive={() => onArchive(project)} />
@@ -328,10 +329,10 @@ export function ProjectDashboard({ files, flows, project, openNonce, archived, o
         <button
           type="button"
           onClick={addDraft}
-          aria-label="Нова розмова з агентом"
+          aria-label={t("dash.newConvo")}
           className="ml-auto flex shrink-0 items-center gap-1 rounded-[8px] border border-line bg-panel px-2.5 py-1 text-[11.5px] font-bold text-ink shadow-card hover:border-accent/45 hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
         >
-          <span className="text-[13px] leading-none text-accent">+</span> Агент
+          <span className="text-[13px] leading-none text-accent">+</span> {t("dash.agent")}
         </button>
       </div>
 
@@ -362,6 +363,7 @@ export function ProjectDashboard({ files, flows, project, openNonce, archived, o
             onClose={closeNode}
             onDraftClose={removeDraft}
             onDraftSpawned={draftSpawned}
+            onHandoff={addHandoffDraft}
           />
         ) : (
           <SchemeBoard
@@ -384,8 +386,8 @@ export function ProjectDashboard({ files, flows, project, openNonce, archived, o
       ) : (
         <div className="flex flex-1 items-center justify-center px-4 py-5 text-center">
           <div>
-            <div className="text-[13.5px] font-semibold text-dim">На схемі поки порожньо</div>
-            <div className="mt-0.5 text-[12px] text-dim">Відкрий пульт у правому нижньому куті і клікни розмову — вона з&apos;явиться тут</div>
+            <div className="text-[13.5px] font-semibold text-dim">{t("dash.emptyTitle")}</div>
+            <div className="mt-0.5 text-[12px] text-dim">{t("dash.emptyHint")}</div>
           </div>
         </div>
       )}

@@ -5,17 +5,18 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ChevronRight } from "@/components/icons";
 import type { Flow } from "@/lib/flows/types";
+import { useLocale } from "@/lib/i18n";
 import type { FileEntry } from "@/lib/types";
 
-import { BranchPane } from "@/components/BranchPane";
+import { BranchPane, kindLabel } from "@/components/BranchPane";
 import { DraftAgentPane } from "@/components/DraftAgentPane";
 import { FlowDialog } from "@/components/flows/FlowDialog";
-import { canStartFlow, flowByImplementer } from "@/components/flows/flowModel";
+import { canStartFlow, flowByImplementer, VERDICT_GLYPHS, verdictTone } from "@/components/flows/flowModel";
 import { FlowStrip } from "@/components/flows/FlowStrip";
 import { RoundDeck } from "@/components/flows/RoundDeck";
 import { canHandoff, HandoffHandle } from "@/components/HandoffHandle";
 import type { BranchGroup } from "@/components/projectModel";
-import { activityDot, cleanTitle, engineBadge, fmtAge } from "@/components/utils";
+import { activityDot, cleanTitle, engineBadge, engineEdge, fmtAge } from "@/components/utils";
 
 import {
   buildSchemeLayout,
@@ -169,12 +170,135 @@ function FarLabel({ file }: { file: FileEntry }) {
   );
 }
 
+const liteNoop = () => undefined;
+
+/* Map mode (the phone's full-screen overlay) draws every conversation as a
+   static identity card. A full pane per node would run a polling LogFeed and
+   hold thousands of transcript lines each — multiplied across the project it
+   exceeds the mobile tab's memory budget and iOS kills the renderer. The card
+   carries what a pick decision needs; the transcript opens after the pick. */
+function LiteNodeShell({ node, ringed, flow }: { node: SchemeNode; ringed: boolean; flow: Flow | null }) {
+  const { t } = useLocale();
+  const badge = engineBadge(node.file);
+  return (
+    <div
+      data-scheme-node={node.file.path}
+      className="scheme-enter absolute"
+      style={{ transform: `translate(${node.x}px, ${node.y}px)`, width: node.w, height: node.h, transition: MOVE_TRANSITION }}
+    >
+      {flow ? (
+        <div className="absolute inset-x-0 -top-10 z-[4] flex justify-center">
+          <FlowStrip flow={flow} onFocusRound={liteNoop} />
+        </div>
+      ) : null}
+      {node.under.length ? (
+        <>
+          <div className="absolute inset-x-4 -bottom-4 h-5 rounded-[10px] border border-line bg-panel/70 shadow-card" aria-hidden />
+          <div className="absolute inset-x-2 -bottom-2 h-5 rounded-[10px] border border-line bg-panel/90 shadow-card" aria-hidden />
+        </>
+      ) : null}
+      <div
+        className={`relative z-[1] flex h-full min-w-0 flex-col overflow-hidden rounded-[10px] border border-t-4 bg-panel shadow-card ${
+          ringed ? "ring-2 ring-accent/60" : ""
+        }`}
+        style={engineEdge(node.file)}
+      >
+        <div className="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2.5">
+          <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${activityDot(node.file.activity)}`} />
+          <span className="shrink-0 rounded-full px-2 py-0.5 text-[11px] font-bold" style={badge.style}>
+            {badge.label}
+          </span>
+          {node.file.model ? <span className="min-w-0 truncate font-mono text-[11px] text-dim">{node.file.model}</span> : null}
+          <span className="ml-auto shrink-0 text-[11px] text-dim">{fmtAge(node.file.mtime)}</span>
+        </div>
+        <div className="min-w-0 flex-1 px-3 py-2.5 text-[14px] font-semibold leading-snug">
+          <span className="line-clamp-5">{cleanTitle(node.file.title, 180)}</span>
+        </div>
+        {node.under.length ? (
+          <div className="shrink-0 px-3 pb-2.5 text-[11px] font-semibold text-dim">
+            {node.under.length} {t("scheme.underneath")}
+          </div>
+        ) : null}
+      </div>
+      <FarLabel file={node.file} />
+    </div>
+  );
+}
+
+/** Draft placeholder on the map: a pick jumps back to the focused draft pane. */
+function LiteDraftShell({ draft, ringed }: { draft: DraftNode; ringed: boolean }) {
+  const { t } = useLocale();
+  return (
+    <div
+      data-scheme-node={draft.key}
+      className="scheme-enter absolute"
+      style={{ transform: `translate(${draft.x}px, ${draft.y}px)`, width: draft.w, height: draft.h, transition: MOVE_TRANSITION }}
+    >
+      <div
+        className={`flex h-full items-center justify-center rounded-[10px] border border-dashed border-line bg-panel/70 ${
+          ringed ? "ring-2 ring-accent/60" : ""
+        }`}
+      >
+        <span className="flex items-center gap-1.5 text-[13px] font-semibold text-dim">
+          <span className="text-[15px] leading-none text-accent">＋</span> {t("mobile.agent")}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/** Review deck on the map: the latest round's state without mounting its feed. */
+function LiteDeckShell({ deck }: { deck: DeckNode }) {
+  const { t } = useLocale();
+  const latest = deck.rounds.at(-1) ?? null;
+  const round = latest?.round ?? null;
+  const tone = verdictTone(round?.verdict ?? null);
+  return (
+    <div
+      data-scheme-node={deck.key}
+      className="scheme-enter absolute"
+      style={{ transform: `translate(${deck.x}px, ${deck.y}px)`, width: deck.w, height: deck.h, transition: MOVE_TRANSITION }}
+    >
+      <div className="flex h-full flex-col overflow-hidden rounded-[10px] border border-line bg-panel shadow-card">
+        {round ? (
+          <>
+            <div
+              className="flex shrink-0 items-center gap-1.5 border-b border-line px-3 py-2.5"
+              style={{ backgroundColor: tone.soft, color: tone.color }}
+            >
+              <span className="shrink-0 text-[12px] font-bold">
+                R{round.n} {round.verdict ? VERDICT_GLYPHS[round.verdict] : round.error ? "!" : "⏳"}
+              </span>
+              <span className="min-w-0 truncate text-[11px] font-semibold">
+                {round.error ? t("roundDeck.aborted") : (round.verdict ?? t("roundDeck.reviewInProgress"))}
+              </span>
+            </div>
+            <div className="min-w-0 flex-1 px-3 py-2.5 text-[13px] font-semibold leading-snug">
+              <span className="line-clamp-4">
+                {latest?.file ? cleanTitle(latest.file.title, 140) : t("roundDeck.spawningReviewer")}
+              </span>
+            </div>
+            {deck.rounds.length > 1 ? (
+              <div className="shrink-0 px-3 pb-2.5 text-[11px] font-semibold text-dim">
+                {t("roundDeck.moreRounds", { count: deck.rounds.length - 1 })}
+              </div>
+            ) : null}
+          </>
+        ) : (
+          <div className="flex flex-1 items-center justify-center text-[12px] font-semibold text-dim">{t("roundDeck.waitingFirst")}</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /**
  * Quiet branches of a pane as a column of collapsed mini cards: the subtree
  * stays readable on the diagram even when nothing in it runs. A click opens
  * the branch as a full node.
  */
 function MiniStackShell({ stack, onSelect }: { stack: MiniStack; onSelect: (file: FileEntry) => void }) {
+  const { t } = useLocale();
   return (
     <div
       data-scheme-node={stack.key}
@@ -199,7 +323,7 @@ function MiniStackShell({ stack, onSelect }: { stack: MiniStack; onSelect: (file
                 <span className="min-w-0 flex-1 truncate text-[11.5px] font-semibold">{cleanTitle(file.title, 70)}</span>
               </span>
               <span className="flex items-center gap-2 pl-3 text-[10.5px] text-dim">
-                <span>{file.kind}</span>
+                <span>{kindLabel(t, file.kind)}</span>
                 <span>{fmtAge(file.mtime)}</span>
                 {branches ? <span>⤷ {branches}</span> : null}
               </span>
@@ -234,6 +358,7 @@ function NodeShell({
   onFocusRound: (flowId: string, round: number) => void;
   onHandoff?: (file: FileEntry) => void;
 }) {
+  const { t } = useLocale();
   const [underOpen, setUnderOpen] = useState(false);
   const [flowOpen, setFlowOpen] = useState(false);
   return (
@@ -253,10 +378,10 @@ function NodeShell({
             data-scheme-ui
             className="inline-flex h-7 items-center gap-1 rounded-full border border-line bg-panel px-2.5 text-[11px] font-semibold text-dim shadow-card hover:border-accent/45 hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
             aria-expanded={flowOpen}
-            title="Запустити цикл implement → review для цієї розмови"
+            title={t("scheme.flowTitle")}
             onClick={() => setFlowOpen((value) => !value)}
           >
-            <span className="text-[13px] leading-none text-accent">⟳</span> Флоу
+            <span className="text-[13px] leading-none text-accent">⟳</span> {t("scheme.flow")}
           </button>
         </div>
       ) : null}
@@ -291,11 +416,11 @@ function NodeShell({
         <button
           className="absolute -bottom-11 left-1/2 z-[2] inline-flex h-7 -translate-x-1/2 items-center gap-1.5 whitespace-nowrap rounded-full border border-line bg-panel px-2.5 text-[11px] font-semibold text-dim shadow-card hover:border-accent/40 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
           aria-expanded={underOpen}
-          title="Згорнуті гілки й задачі цієї розмови"
+          title={t("scheme.collapsedTitle")}
           onClick={() => setUnderOpen((value) => !value)}
         >
           <Layers className="h-3.5 w-3.5" aria-hidden />
-          {node.under.length} під сподом
+          {node.under.length} {t("scheme.underneath")}
           <ChevronRight className={`h-3 w-3 transition-transform ${underOpen ? "rotate-90" : ""}`} aria-hidden />
         </button>
       ) : null}
@@ -374,6 +499,7 @@ const NodesLayer = memo(function NodesLayer({
   project,
   files,
   interactive,
+  lite,
   selected,
   focus,
   flowsByImpl,
@@ -389,6 +515,8 @@ const NodesLayer = memo(function NodesLayer({
   project: string;
   files: FileEntry[];
   interactive: boolean;
+  /** Map mode: identity cards instead of live panes (no feeds, no polling). */
+  lite: boolean;
   selected: string | null;
   focus: string | null;
   flowsByImpl: Map<string, Flow>;
@@ -405,34 +533,51 @@ const NodesLayer = memo(function NodesLayer({
       {layout.stacks.map((stack) => (
         <MiniStackShell key={stack.key} stack={stack} onSelect={onSelect} />
       ))}
-      {layout.decks.map((deck) => (
-        <DeckShell key={deck.key} deck={deck} files={files} focus={deckFocus} onSelect={onSelect} />
-      ))}
-      {layout.drafts.map((draft) => (
-        <DraftShell
-          key={draft.key}
-          draft={draft}
-          project={project}
-          files={files}
-          ringed={selected === draft.key || focus === draft.key}
-          onDraftClose={onDraftClose}
-          onDraftSpawned={onDraftSpawned}
-        />
-      ))}
-      {layout.nodes.map((node) => (
-        <NodeShell
-          key={node.file.path}
-          node={node}
-          files={files}
-          ringed={selected === node.file.path || focus === node.file.path}
-          flow={flowsByImpl.get(node.file.path) ?? null}
-          canFlow={canStartFlow(node.file, flowsByImpl)}
-          onSelect={onSelect}
-          onClose={onClose}
-          onFocusRound={onFocusRound}
-          onHandoff={onHandoff}
-        />
-      ))}
+      {layout.decks.map((deck) =>
+        lite ? (
+          <LiteDeckShell key={deck.key} deck={deck} />
+        ) : (
+          <DeckShell key={deck.key} deck={deck} files={files} focus={deckFocus} onSelect={onSelect} />
+        ),
+      )}
+      {layout.drafts.map((draft) =>
+        lite ? (
+          <LiteDraftShell key={draft.key} draft={draft} ringed={selected === draft.key || focus === draft.key} />
+        ) : (
+          <DraftShell
+            key={draft.key}
+            draft={draft}
+            project={project}
+            files={files}
+            ringed={selected === draft.key || focus === draft.key}
+            onDraftClose={onDraftClose}
+            onDraftSpawned={onDraftSpawned}
+          />
+        ),
+      )}
+      {layout.nodes.map((node) =>
+        lite ? (
+          <LiteNodeShell
+            key={node.file.path}
+            node={node}
+            ringed={selected === node.file.path || focus === node.file.path}
+            flow={flowsByImpl.get(node.file.path) ?? null}
+          />
+        ) : (
+          <NodeShell
+            key={node.file.path}
+            node={node}
+            files={files}
+            ringed={selected === node.file.path || focus === node.file.path}
+            flow={flowsByImpl.get(node.file.path) ?? null}
+            canFlow={canStartFlow(node.file, flowsByImpl)}
+            onSelect={onSelect}
+            onClose={onClose}
+            onFocusRound={onFocusRound}
+            onHandoff={onHandoff}
+          />
+        ),
+      )}
     </div>
   );
 });
@@ -490,6 +635,7 @@ export function SchemeBoard({
   onDraftSpawned,
   onHandoff,
 }: Props) {
+  const { t } = useLocale();
   const mapMode = Boolean(onNodePick);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const tapRef = useRef<{ x: number; y: number } | null>(null);
@@ -1018,6 +1164,7 @@ export function SchemeBoard({
           project={project}
           files={files}
           interactive={!handLike}
+          lite={mapMode}
           selected={selected}
           focus={visualFocus}
           flowsByImpl={flowsByImpl}
@@ -1034,29 +1181,29 @@ export function SchemeBoard({
       <div data-scheme-ui className="absolute left-3 top-3 z-40 flex items-center gap-1 rounded-[10px] border border-line bg-panel/95 p-1 shadow-card">
         {mapMode ? null : (
           <>
-            <ToolButton active={handLike} title="Рука — тягнути полотно (H, або тримай Space)" onClick={() => setMode("hand")}>
+            <ToolButton active={handLike} title={t("scheme.handTool")} onClick={() => setMode("hand")}>
               <Hand className="h-4 w-4" aria-hidden />
             </ToolButton>
-            <ToolButton active={!handLike} title="Виділення — клік і робота з розмовами (V)" onClick={() => setMode("select")}>
+            <ToolButton active={!handLike} title={t("scheme.selectTool")} onClick={() => setMode("select")}>
               <MousePointer2 className="h-4 w-4" aria-hidden />
             </ToolButton>
             <div className="mx-0.5 h-5 w-px bg-line" aria-hidden />
           </>
         )}
-        <ToolButton title="Віддалити (−)" onClick={() => zoomCenter(0.8)}>
+        <ToolButton title={t("scheme.zoomOut")} onClick={() => zoomCenter(0.8)}>
           <Minus className="h-4 w-4" aria-hidden />
         </ToolButton>
         <button
           className="min-w-[46px] rounded-[8px] px-1 text-center text-[11px] font-semibold text-dim hover:bg-bg hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-          title="Масштаб 100% (1)"
+          title={t("scheme.zoom100")}
           onClick={() => zoomTo(1)}
         >
           {Math.round(cam.z * 100)}%
         </button>
-        <ToolButton title="Наблизити (+)" onClick={() => zoomCenter(1.25)}>
+        <ToolButton title={t("scheme.zoomIn")} onClick={() => zoomCenter(1.25)}>
           <Plus className="h-4 w-4" aria-hidden />
         </ToolButton>
-        <ToolButton title="Вписати все (0, або подвійний клік по фону)" onClick={fit}>
+        <ToolButton title={t("scheme.fit")} onClick={fit}>
           <Maximize2 className="h-4 w-4" aria-hidden />
         </ToolButton>
       </div>

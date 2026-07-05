@@ -3,7 +3,7 @@
 import { useMemo } from "react";
 
 import type { Flow } from "@/lib/flows/types";
-import { type TFunction, useLocale } from "@/lib/i18n";
+import { translate, type TFunction, useLocale } from "@/lib/i18n";
 import type { ActionEvent, FileEntry } from "@/lib/types";
 import { cleanTitle } from "@/lib/title";
 
@@ -97,8 +97,9 @@ export function useSwitchboardData(
   archived: ReadonlySet<string> = EMPTY_ARCHIVED,
   flows: Flow[] = EMPTY_FLOWS,
 ): SwitchboardData {
-  const { locale, t } = useLocale();
+  const { locale } = useLocale();
   return useMemo(() => {
+    const t: TFunction = (key, params) => translate(locale, key, params);
     const counts = descendantCounts(files);
     const latestByFile = new Map<string, ActionEvent>();
     for (const event of events) {
@@ -163,7 +164,7 @@ export function useSwitchboardData(
     const recent = base.filter((item) => item.kind === "recent").sort(recentBucketSort);
     const older = base.filter((item) => item.kind === "older").sort(recentBucketSort);
     return { waiting, working, recent, older, livePreview: working.slice(0, 3) };
-  }, [files, events, query, now, archived, flows, locale, t]);
+  }, [files, events, query, now, archived, flows, locale]);
 }
 
 const EMPTY_ARCHIVED: ReadonlySet<string> = new Set();

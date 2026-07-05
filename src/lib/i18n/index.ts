@@ -35,6 +35,7 @@ function ensureHydrated() {
   if (hydrated || typeof window === "undefined") return;
   hydrated = true;
   current = detectLocale();
+  document.documentElement.lang = current;
 }
 
 export function getLocale(): Locale {

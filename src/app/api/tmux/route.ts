@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { rejectCrossOrigin } from "@/lib/sameOrigin";
 import { listFiles } from "@/lib/scanner";
 import { pathAllowed } from "@/lib/scanner/roots";
-import { parseScreenMenu, screenWaitsForInput } from "@/lib/status";
+import { detectBlockingGate, parseScreenMenu, screenWaitsForInput } from "@/lib/status";
 import {
   buildImagePayload,
   collectImagePayloads,
@@ -19,6 +19,7 @@ import {
   sendKeys,
   sendText,
   sendToResumedAgent,
+  withPaneLock,
 } from "@/lib/tmux";
 import type { ApiError } from "@/lib/types";
 
@@ -90,7 +91,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<SendResponse 
   const rejection = rejectCrossOrigin(req);
   if (rejection) return rejection;
 
-  let body: { pid?: unknown; path?: unknown; text?: unknown; image?: unknown; images?: unknown; action?: unknown; key?: unknown; label?: unknown };
+  let body: { pid?: unknown; path?: unknown; text?: unknown; image?: unknown; images?: unknown; action?: unknown; key?: unknown; label?: unknown; question?: unknown };
   try {
     body = (await req.json()) as {
       pid?: unknown;
@@ -101,6 +102,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<SendResponse 
       action?: unknown;
       key?: unknown;
       label?: unknown;
+      question?: unknown;
     };
   } catch {
     return NextResponse.json({ error: "некоректний JSON" }, { status: 400 });
@@ -146,17 +148,30 @@ export async function POST(req: NextRequest): Promise<NextResponse<SendResponse 
       return NextResponse.json({ error: "немає активного пейна агента" }, { status: 409 });
     }
     try {
-      const screen = await paneScreen(target);
-      if (!screenWaitsForInput(screen)) {
-        return NextResponse.json({ error: "пейн уже не чекає на відповідь" }, { status: 409 });
-      }
-      if (/^[1-9]$/.test(key)) {
-        const option = parseScreenMenu(screen)?.options.find((item) => String(item.value) === key);
-        if (!option || (typeof body.label === "string" && body.label !== option.label)) {
-          return NextResponse.json({ error: "меню на екрані вже змінилось" }, { status: 409 });
+      const stale = await withPaneLock(target, async () => {
+        const screen = await paneScreen(target);
+        const blocking = detectBlockingGate(screen);
+        if (blocking !== null) return "blocked";
+        if (!screenWaitsForInput(screen)) return "closed";
+        const menu = parseScreenMenu(screen);
+        if (/^[1-9]$/.test(key)) {
+          const option = menu?.options.find((item) => String(item.value) === key);
+          if (
+            !option ||
+            (typeof body.label === "string" && body.label !== option.label) ||
+            (typeof body.question === "string" && body.question !== menu?.question)
+          ) {
+            return "changed";
+          }
+        } else if (menu && typeof body.question === "string" && body.question !== menu.question) {
+          return "changed";
         }
-      }
-      await sendKeys(target, [key]);
+        await sendKeys(target, [key]);
+        return null;
+      });
+      if (stale === "blocked") return NextResponse.json({ error: "пейн чекає на підтвердження, яке потребує ручного рішення" }, { status: 409 });
+      if (stale === "closed") return NextResponse.json({ error: "пейн уже не чекає на відповідь" }, { status: 409 });
+      if (stale === "changed") return NextResponse.json({ error: "меню на екрані вже змінилось" }, { status: 409 });
       return NextResponse.json({ ok: true, target });
     } catch (error) {
       return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
