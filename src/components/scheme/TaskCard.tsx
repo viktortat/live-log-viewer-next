@@ -21,6 +21,19 @@ import { TASK_BODY_MAX, TASK_W, taskRect, type SchemeRect } from "./taskGeometry
 const EDIT_MIN_Z = 0.55;
 const AUTOSAVE_MS = 900;
 
+/* A blur that happens because the OS took the window itself (keyboard-layout
+   switcher, alt-tab) must not end the edit: the layout hotkey is how text
+   gets typed here, and the caret belongs back when the window returns. The
+   commit runs only for in-page blurs; on a window blur the field re-grabs
+   focus once the window is active again. */
+function commitUnlessWindowBlur(el: HTMLTextAreaElement | null, commit: () => void): void {
+  if (document.hasFocus()) {
+    commit();
+    return;
+  }
+  window.addEventListener("focus", () => el?.focus(), { once: true });
+}
+
 export interface TaskCardHandlers {
   patch: (id: string, patch: { text?: string; status?: BoardTask["status"]; pos?: { x: number; y: number } }) => Promise<string | null>;
   remove: (id: string) => void;
@@ -385,8 +398,10 @@ export const TaskCard = memo(function TaskCard({
       });
       return;
     }
-    /* A stationary press on the text is the inline-edit gesture. */
-    if ((event.target as HTMLElement).closest("[data-task-body]")) beginEdit();
+    /* A stationary press anywhere on the card is the inline-edit gesture —
+       buttons, action chips and popovers already opted out at press time, so
+       a click that landed on padding or an assignment chip edits too. */
+    beginEdit();
   };
 
   const tone = TASK_TONES[task.status];
@@ -431,7 +446,7 @@ export const TaskCard = memo(function TaskCard({
             ref={editRef}
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
-            onBlur={commitEdit}
+            onBlur={() => commitUnlessWindowBlur(editRef.current, commitEdit)}
             onKeyDown={(event) => {
               if (event.key === "Escape") {
                 event.preventDefault();
@@ -500,7 +515,7 @@ export const TaskCard = memo(function TaskCard({
           title={t("tasks.statusTitle", { label: t(`tasks.status.${task.status}`) })}
           onClick={() => void handlers.patch(task.id, { status: nextTaskStatus(task.status) })}
         >
-          {t(`tasks.status.${task.status}`)}
+          {t("tasks.statusPrefix")}: {t(`tasks.status.${task.status}`)}
         </button>
         <button
           type="button"
@@ -570,7 +585,7 @@ export function NewTaskCard({
           ref={ref}
           value={text}
           onChange={(event) => setText(event.target.value)}
-          onBlur={commit}
+          onBlur={() => commitUnlessWindowBlur(ref.current, commit)}
           onKeyDown={(event) => {
             if (event.key === "Escape") {
               event.preventDefault();
