@@ -446,10 +446,14 @@ export function useSchemeCamera({
     }
     if (event.button !== 0) return;
     /* Armed «задача» tool: this click places the card and the tool reverts
-       to select — no pan, no selection change. */
+       to select — no pan, no selection change. preventDefault suppresses the
+       compatibility mousedown: its focus fixup would land on the background
+       and blur the draft's just-focused textarea, whose empty-blur handler
+       cancels the card before it is ever seen. */
     if (taskTool && !mapMode && placeTaskRef.current) {
       const rect = viewportRef.current?.getBoundingClientRect();
       if (rect) {
+        event.preventDefault();
         placeTaskRef.current((event.clientX - rect.left - cam.x) / cam.z, (event.clientY - rect.top - cam.y) / cam.z);
         setTaskTool(false);
         setMode("select");
