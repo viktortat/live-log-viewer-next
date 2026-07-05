@@ -409,7 +409,7 @@ export function SchemeBoard({
         </ToolButton>
       </div>
 
-      <Minimap layout={layout} cam={cam} vp={vp} onJump={jump} />
+      <Minimap layout={layout} tasks={mergedTasks} cam={cam} vp={vp} onJump={jump} />
 
       {!mapMode && selectionFiles.length ? (
         <SelectionComposer project={project} selection={selectionFiles} centroid={selectionCentroid} />
