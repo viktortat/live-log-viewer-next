@@ -510,4 +510,7 @@ export const en = {
   "mobile.tapNode": "Tap a node — the conversation opens full-screen",
   "mobile.agent": "agent",
   "mobile.openMap": "Open the project map",
+
+  // Board tasks
+  "tasks.failed": "failed ({status})",
 } satisfies Dictionary;

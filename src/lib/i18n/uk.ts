@@ -473,4 +473,6 @@ export const uk: Record<keyof typeof en, Message> = {
   "mobile.tapNode": "Тапни вузол — розмова відкриється на весь екран",
   "mobile.agent": "агент",
   "mobile.openMap": "Відкрити карту проєкту",
+
+  "tasks.failed": "не вдалося ({status})",
 };
