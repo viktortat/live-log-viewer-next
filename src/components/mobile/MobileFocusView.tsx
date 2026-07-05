@@ -1,8 +1,10 @@
 "use client";
 
+import { ListTodo } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { X } from "@/components/icons";
+import { TaskSheet, type TaskSheetView } from "@/components/tasks/TaskSheet";
 import type { Flow } from "@/lib/flows/types";
 import { useLocale } from "@/lib/i18n";
 import type { BoardTask } from "@/lib/tasks/types";
@@ -65,6 +67,7 @@ export function MobileFocusView({ project, groups, manual, files, flows, tasks, 
   const { t } = useLocale();
   const [focusPath, setFocusPath] = useState<string | null>(null);
   const [mapOpen, setMapOpen] = useState(false);
+  const [taskSheet, setTaskSheet] = useState<TaskSheetView | null>(null);
   const swipeRef = useRef<{ x: number; y: number } | null>(null);
   const activeChipRef = useRef<HTMLButtonElement | null>(null);
 
@@ -164,6 +167,11 @@ export function MobileFocusView({ project, groups, manual, files, flows, tasks, 
   const pickFromMap = useCallback(
     (key: string) => {
       setMapOpen(false);
+      /* Task mini-cards on the map open in the sheet, not as panes. */
+      if (key.startsWith("task::")) {
+        setTaskSheet({ taskId: key.slice("task::".length) });
+        return;
+      }
       if (byKey.has(key)) {
         setFocusPath(key);
         return;
@@ -221,6 +229,15 @@ export function MobileFocusView({ project, groups, manual, files, flows, tasks, 
           <div className="flex flex-1 items-center justify-center text-center text-[13px] text-dim">{t("mobile.noConvos")}</div>
         )}
         <MapChip layout={layout} current={resolvedKey} onOpen={() => setMapOpen(true)} />
+        <button
+          type="button"
+          className="absolute bottom-[168px] right-4 z-30 inline-flex h-9 items-center gap-1 rounded-full border border-line bg-panel/95 px-2.5 text-[11px] font-bold text-ink shadow-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+          aria-label={t("tasks.panelToggleAria")}
+          onClick={() => setTaskSheet("list")}
+        >
+          <ListTodo className="h-4 w-4 text-accent" aria-hidden />
+          {tasks.filter((task) => task.status !== "done").length || null}
+        </button>
       </div>
 
       {mapOpen ? (
@@ -257,6 +274,10 @@ export function MobileFocusView({ project, groups, manual, files, flows, tasks, 
             {t("mobile.tapNode")}
           </div>
         </div>
+      ) : null}
+
+      {taskSheet ? (
+        <TaskSheet project={project} tasks={tasks} files={files} initialView={taskSheet} onClose={() => setTaskSheet(null)} />
       ) : null}
     </div>
   );

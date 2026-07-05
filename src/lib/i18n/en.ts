@@ -553,4 +553,11 @@ export const en = {
   "tasks.panelAll": "all",
   "tasks.panelEmpty": "no tasks yet — drop one with the board's task tool (N)",
   "tasks.panelClose": "Close the task panel",
+  "tasks.sheetNew": "new task",
+  "tasks.sheetCreate": "Create the task",
+  "tasks.sheetBack": "Back to the task list",
+  "tasks.sheetTargets": { one: "{count} target", other: "{count} targets" },
+  "tasks.sheetAssignments": "assignments",
+  "tasks.sheetEmpty": "no tasks yet",
+  "tasks.sheetGone": "the task is gone",
 } satisfies Dictionary;

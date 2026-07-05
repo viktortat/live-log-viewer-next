@@ -515,4 +515,11 @@ export const uk: Record<keyof typeof en, Message> = {
   "tasks.panelAll": "всі",
   "tasks.panelEmpty": "задач поки нема — кинь картку інструментом «задача» (N)",
   "tasks.panelClose": "Закрити панель задач",
+  "tasks.sheetNew": "нова задача",
+  "tasks.sheetCreate": "Створити задачу",
+  "tasks.sheetBack": "Назад до списку задач",
+  "tasks.sheetTargets": { one: "{count} адресат", few: "{count} адресати", many: "{count} адресатів", other: "{count} адресатів" },
+  "tasks.sheetAssignments": "призначення",
+  "tasks.sheetEmpty": "задач поки нема",
+  "tasks.sheetGone": "задачі вже немає",
 };
