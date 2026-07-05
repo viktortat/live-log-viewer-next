@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useAgentChimes } from "@/hooks/useAgentChimes";
 import { useArchivedProjects } from "@/hooks/useArchivedProjects";
 import { useFiles } from "@/hooks/useFiles";
+import { useIsMobile } from "@/hooks/useIsMobile";
 import { useLocale } from "@/lib/i18n";
 import type { FileEntry } from "@/lib/types";
 
@@ -50,6 +51,8 @@ export function Viewer() {
   const { files, flows } = useFiles();
   useAgentChimes(files);
   const { archivedProjects, archiveProject, unarchiveProject } = useArchivedProjects(files);
+  const isMobile = useIsMobile();
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [project, setProject] = useState<string>(OVERVIEW);
   const [pendingPath, setPendingPath] = useState<string | null>(null);
   const [toastPath, setToastPath] = useState<string | null>(null);
@@ -82,7 +85,17 @@ export function Viewer() {
     setProject(nextProject);
     localStorage.setItem(PROJECT_KEY, nextProject);
     writeHash(nextProject);
+    setDrawerOpen(false);
   }, []);
+
+  useEffect(() => {
+    if (!drawerOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setDrawerOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [drawerOpen]);
 
   /* A file open (overview card, deep link) becomes a column of its project. */
   const openFile = useCallback(
@@ -129,7 +142,20 @@ export function Viewer() {
 
   return (
     <div className="flex h-full">
-      <ProjectRail files={files} archivedProjects={archivedProjects} selected={project} onSelect={selectProject} />
+      {isMobile ? null : (
+        <ProjectRail files={files} archivedProjects={archivedProjects} selected={project} onSelect={selectProject} />
+      )}
+      {isMobile && drawerOpen ? (
+        <div className="fixed inset-0 z-50 flex">
+          <ProjectRail files={files} archivedProjects={archivedProjects} selected={project} onSelect={selectProject} />
+          <button
+            type="button"
+            className="min-w-0 flex-1 bg-ink/35"
+            aria-label={t("viewer.closeProjects")}
+            onClick={() => setDrawerOpen(false)}
+          />
+        </div>
+      ) : null}
       <main className="flex min-w-0 flex-1 flex-col">
         {toastFile ? (
           <div className="fixed right-4 top-4 z-50 flex max-w-[360px] gap-2 rounded-[8px] border border-[#e0ae45]/45 bg-[#fff9ed] px-4 py-3 text-[13px] font-semibold text-ink shadow-card">
@@ -158,6 +184,7 @@ export function Viewer() {
             archivedProjects={archivedProjects}
             onSelectProject={selectProject}
             onSelectFile={openFile}
+            onMenu={isMobile ? () => setDrawerOpen(true) : undefined}
           />
         ) : (
           <ProjectDashboard
@@ -168,6 +195,7 @@ export function Viewer() {
             archived={archivedProjects.has(project)}
             onArchive={archiveProject}
             onUnarchive={unarchiveProject}
+            onMenu={isMobile ? () => setDrawerOpen(true) : undefined}
           />
         )}
       </main>

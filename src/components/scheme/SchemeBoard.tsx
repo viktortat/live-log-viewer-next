@@ -19,6 +19,7 @@ import { activityDot, cleanTitle, engineBadge, fmtAge } from "@/components/utils
 
 import {
   buildSchemeLayout,
+  stackItemAt,
   type DeckNode,
   type DraftNode,
   type MiniStack,
@@ -489,7 +490,9 @@ export function SchemeBoard({
   onDraftSpawned,
   onHandoff,
 }: Props) {
+  const mapMode = Boolean(onNodePick);
   const viewportRef = useRef<HTMLDivElement | null>(null);
+  const tapRef = useRef<{ x: number; y: number } | null>(null);
   const [cam, setCam] = useState<Camera>({ x: 0, y: 0, z: 0.5 });
   const [mode, setModeState] = useState<Mode>("select");
   const [spacePan, setSpacePan] = useState(false);
@@ -695,37 +698,40 @@ export function SchemeBoard({
     [glideTo],
   );
 
-  /* First layout of a project: restore the saved camera or fit everything. */
+  /* First layout of a project: restore the saved camera or fit everything.
+     The map always opens fitted — its job is the whole picture. */
   useEffect(() => {
     if (initedFor.current === project || (!layout.nodes.length && !layout.drafts.length)) return;
     initedFor.current = project;
-    try {
-      const raw = sessionStorage.getItem("llvCam:" + project);
-      if (raw) {
-        const saved = JSON.parse(raw) as Camera;
-        if (Number.isFinite(saved.x) && Number.isFinite(saved.y) && Number.isFinite(saved.z) && saved.z >= MIN_Z && saved.z <= MAX_Z) {
-          /* eslint-disable-next-line react-hooks/set-state-in-effect */
-          setCam(saved);
-          return;
+    if (!mapMode) {
+      try {
+        const raw = sessionStorage.getItem("llvCam:" + project);
+        if (raw) {
+          const saved = JSON.parse(raw) as Camera;
+          if (Number.isFinite(saved.x) && Number.isFinite(saved.y) && Number.isFinite(saved.z) && saved.z >= MIN_Z && saved.z <= MAX_Z) {
+            /* eslint-disable-next-line react-hooks/set-state-in-effect */
+            setCam(saved);
+            return;
+          }
         }
+      } catch {
+        /* corrupt saved camera — fall through to fit */
       }
-    } catch {
-      /* corrupt saved camera — fall through to fit */
     }
     const c = fitCam();
     if (c) {
 
       setCam(c);
     }
-  }, [project, layout, fitCam]);
+  }, [project, layout, fitCam, mapMode]);
 
   /* Debounced: a pan produces hundreds of camera frames, storage needs only
-     the resting position. */
+     the resting position. The map never writes — the desktop camera survives. */
   useEffect(() => {
-    if (initedFor.current !== project) return;
+    if (mapMode || initedFor.current !== project) return;
     const t = window.setTimeout(() => sessionStorage.setItem("llvCam:" + project, JSON.stringify(cam)), 300);
     return () => window.clearTimeout(t);
-  }, [cam, project]);
+  }, [cam, project, mapMode]);
 
   /* An opened conversation glides into view once its node exists in the layout. */
   useEffect(() => {
@@ -831,6 +837,9 @@ export function SchemeBoard({
   const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement;
     if (target.closest("[data-scheme-ui]")) return;
+    /* Map mode: remember where the press started, the click handler turns a
+       stationary press into a node pick. */
+    if (mapMode && event.isPrimary) tapRef.current = { x: event.clientX, y: event.clientY };
     /* Second finger anywhere turns the gesture into a pinch. */
     if (event.pointerType === "touch") {
       pointersRef.current.set(event.pointerId, localPoint(event));
@@ -848,7 +857,7 @@ export function SchemeBoard({
       return;
     }
     if (event.button !== 0) return;
-    const handLike = mode === "hand" || spacePan;
+    const handLike = mapMode || mode === "hand" || spacePan;
     if (!handLike) {
       const nodeEl = target.closest("[data-scheme-node]");
       if (nodeEl) {
@@ -920,7 +929,41 @@ export function SchemeBoard({
     if (node) centerOn(node, 0.9);
   };
 
-  const handLike = mode === "hand" || spacePan;
+  const handLike = mapMode || mode === "hand" || spacePan;
+
+  /* World-coordinate hit test: with panes non-interactive on the map, a tap
+     resolves against the layout geometry instead of the DOM. */
+  const pickAt = (wx: number, wy: number): string | null => {
+    const hit = (r: SchemeRect) => wx >= r.x && wx <= r.x + r.w && wy >= r.y && wy <= r.y + r.h;
+    for (const node of layout.nodes) if (hit(node)) return node.file.path;
+    for (const draft of layout.drafts) if (hit(draft)) return draft.key;
+    for (const stack of layout.stacks) {
+      if (hit(stack)) return stackItemAt(stack, wy)?.path ?? null;
+    }
+    for (const deck of layout.decks) {
+      if (!hit(deck)) continue;
+      /* The front card of a deck is its latest round with a transcript. */
+      for (let i = deck.rounds.length - 1; i >= 0; i--) {
+        const file = deck.rounds[i]?.file;
+        if (file) return file.path;
+      }
+      return null;
+    }
+    return null;
+  };
+
+  const onClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (!onNodePick) return;
+    const start = tapRef.current;
+    tapRef.current = null;
+    if (!start || Math.hypot(event.clientX - start.x, event.clientY - start.y) > 9) return;
+    if ((event.target as HTMLElement).closest("[data-scheme-ui]")) return;
+    const rect = viewportRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const key = pickAt((event.clientX - rect.left - cam.x) / cam.z, (event.clientY - rect.top - cam.y) / cam.z);
+    if (key) onNodePick(key);
+  };
+
   const jump = useCallback(
     (wx: number, wy: number) => setCam((c) => clampCam({ ...c, x: vp.w / 2 - wx * c.z, y: vp.h / 2 - wy * c.z })),
     [vp, clampCam],
@@ -937,6 +980,7 @@ export function SchemeBoard({
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onDoubleClick={onDoubleClick}
+      onClick={onClick}
     >
       {/* Dot grid on its own composited layer: panning moves it with a
           transform (modulo one tile) instead of repainting the viewport
@@ -988,13 +1032,17 @@ export function SchemeBoard({
       </div>
 
       <div data-scheme-ui className="absolute left-3 top-3 z-40 flex items-center gap-1 rounded-[10px] border border-line bg-panel/95 p-1 shadow-card">
-        <ToolButton active={handLike} title="Рука — тягнути полотно (H, або тримай Space)" onClick={() => setMode("hand")}>
-          <Hand className="h-4 w-4" aria-hidden />
-        </ToolButton>
-        <ToolButton active={!handLike} title="Виділення — клік і робота з розмовами (V)" onClick={() => setMode("select")}>
-          <MousePointer2 className="h-4 w-4" aria-hidden />
-        </ToolButton>
-        <div className="mx-0.5 h-5 w-px bg-line" aria-hidden />
+        {mapMode ? null : (
+          <>
+            <ToolButton active={handLike} title="Рука — тягнути полотно (H, або тримай Space)" onClick={() => setMode("hand")}>
+              <Hand className="h-4 w-4" aria-hidden />
+            </ToolButton>
+            <ToolButton active={!handLike} title="Виділення — клік і робота з розмовами (V)" onClick={() => setMode("select")}>
+              <MousePointer2 className="h-4 w-4" aria-hidden />
+            </ToolButton>
+            <div className="mx-0.5 h-5 w-px bg-line" aria-hidden />
+          </>
+        )}
         <ToolButton title="Віддалити (−)" onClick={() => zoomCenter(0.8)}>
           <Minus className="h-4 w-4" aria-hidden />
         </ToolButton>

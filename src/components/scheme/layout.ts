@@ -111,6 +111,14 @@ export interface SchemeLayout {
  */
 const stackHeight = (count: number) => MINI_PAD * 2 + Math.min(count, MINI_MAX) * (MINI_H + MINI_GAP) - MINI_GAP;
 
+/** Which quiet branch a world-space y lands on inside a stack (the mobile map
+    resolves taps by geometry). Internal scrolling is ignored — a scrolled
+    stack maps to the nearest unscrolled row, clamped to the list. */
+export function stackItemAt(stack: MiniStack, wy: number): FileEntry | null {
+  const idx = Math.floor((wy - stack.y - MINI_PAD) / (MINI_H + MINI_GAP));
+  return stack.items[Math.max(0, Math.min(idx, stack.items.length - 1))]?.file ?? null;
+}
+
 /* Card spines under a deck's front card (mirrors RoundDeck's TAB_STEP/TAB_MAX). */
 const DECK_TAB_STEP = 30;
 const DECK_TAB_MAX = 6;

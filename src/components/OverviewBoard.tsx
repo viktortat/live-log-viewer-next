@@ -1,5 +1,6 @@
 "use client";
 
+import { Menu } from "lucide-react";
 import { useMemo } from "react";
 
 import { useColumns } from "@/hooks/useColumns";
@@ -15,9 +16,11 @@ interface Props {
   archivedProjects: ReadonlySet<string>;
   onSelectProject: (project: string) => void;
   onSelectFile: (file: FileEntry) => void;
+  /** Mobile shell: the rail hides behind a drawer, this opens it. */
+  onMenu?: () => void;
 }
 
-export function OverviewBoard({ files, archivedProjects, onSelectProject, onSelectFile }: Props) {
+export function OverviewBoard({ files, archivedProjects, onSelectProject, onSelectFile, onMenu }: Props) {
   const { t } = useLocale();
   const cols = useColumns();
   const allSummaries = useMemo(() => buildProjectSummaries(files), [files]);
@@ -47,6 +50,16 @@ export function OverviewBoard({ files, archivedProjects, onSelectProject, onSele
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <div className="flex h-10 shrink-0 items-center gap-2.5 border-b border-line bg-panel px-4">
+        {onMenu ? (
+          <button
+            type="button"
+            className="-ml-1.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] border border-line bg-bg text-dim hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+            aria-label={t("dash.openProjects")}
+            onClick={onMenu}
+          >
+            <Menu className="h-4 w-4" aria-hidden />
+          </button>
+        ) : null}
         <h1 className="text-[13.5px] font-bold">{t("rail.overview")}</h1>
         <span className="text-[11.5px] text-dim">
           {totalLive

@@ -1,13 +1,16 @@
 "use client";
 
+import { Menu } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { useIsMobile } from "@/hooks/useIsMobile";
 import type { Flow } from "@/lib/flows/types";
 import type { FileEntry } from "@/lib/types";
 
 import { TaskStrip } from "./BranchPane";
 import { clearDraftStorage, draftSrc, setDraftSrc } from "./DraftAgentPane";
 import { claimedReviewerPaths } from "./flows/flowModel";
+import { MobileFocusView } from "./mobile/MobileFocusView";
 import { SchemeBoard } from "./scheme/SchemeBoard";
 import { Switchboard } from "./Switchboard";
 import { buildBranchGroups, collapsedTrees, projectKey, residualItems } from "./projectModel";
@@ -31,6 +34,8 @@ interface Props {
   archived: boolean;
   onArchive: (project: string) => void;
   onUnarchive: (project: string) => void;
+  /** Mobile shell: the rail hides behind a drawer, this opens it. */
+  onMenu?: () => void;
 }
 
 /** Manual additions and removals of scheme nodes, persisted per project. */
@@ -76,7 +81,8 @@ function gotoProject(project: string) {
   location.hash = "#p=" + encodeURIComponent(project);
 }
 
-export function ProjectDashboard({ files, flows, project, openNonce, archived, onArchive, onUnarchive }: Props) {
+export function ProjectDashboard({ files, flows, project, openNonce, archived, onArchive, onUnarchive, onMenu }: Props) {
+  const isMobile = useIsMobile();
   const highlightTimer = useRef<number | null>(null);
   const pendingFocusRef = useRef<string | null>(null);
   const [prefs, setPrefs] = useState<ColumnPrefs>({ manual: [], hidden: [] });
@@ -294,6 +300,16 @@ export function ProjectDashboard({ files, flows, project, openNonce, archived, o
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
       <div className="flex h-10 shrink-0 items-center gap-2.5 border-b border-line bg-panel px-4">
+        {onMenu ? (
+          <button
+            type="button"
+            className="-ml-1.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-[8px] border border-line bg-bg text-dim hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+            aria-label="Відкрити список проєктів"
+            onClick={onMenu}
+          >
+            <Menu className="h-4 w-4" aria-hidden />
+          </button>
+        ) : null}
         <h1 className="truncate text-[13.5px] font-bold">{project}</h1>
         <span className="truncate text-[11.5px] text-dim">{statusBits.length ? statusBits.join(" · ") : "зараз нічого не працює"}</span>
         <SoundToggle />
@@ -333,20 +349,36 @@ export function ProjectDashboard({ files, flows, project, openNonce, archived, o
       ) : null}
 
       {hasNodes ? (
-        <SchemeBoard
-          project={project}
-          groups={schemeGroups}
-          manual={manualNodes}
-          files={files}
-          flows={flows}
-          drafts={drafts}
-          focus={highlight}
-          onSelect={openSwitchboardFile}
-          onClose={closeNode}
-          onDraftClose={removeDraft}
-          onDraftSpawned={draftSpawned}
-          onHandoff={addHandoffDraft}
-        />
+        isMobile ? (
+          <MobileFocusView
+            project={project}
+            groups={schemeGroups}
+            manual={manualNodes}
+            files={files}
+            flows={flows}
+            drafts={drafts}
+            focus={highlight}
+            onSelect={openSwitchboardFile}
+            onClose={closeNode}
+            onDraftClose={removeDraft}
+            onDraftSpawned={draftSpawned}
+          />
+        ) : (
+          <SchemeBoard
+            project={project}
+            groups={schemeGroups}
+            manual={manualNodes}
+            files={files}
+            flows={flows}
+            drafts={drafts}
+            focus={highlight}
+            onSelect={openSwitchboardFile}
+            onClose={closeNode}
+            onDraftClose={removeDraft}
+            onDraftSpawned={draftSpawned}
+            onHandoff={addHandoffDraft}
+          />
+        )
       ) : projectFiles.length ? (
         <QuietFileList files={projectFiles} onOpen={openSwitchboardFile} />
       ) : (
@@ -358,7 +390,9 @@ export function ProjectDashboard({ files, flows, project, openNonce, archived, o
         </div>
       )}
 
-      <Switchboard files={files} flows={flows} project={project} onOpenFile={openSwitchboardFile} />
+      {/* The corner pill would sit on the focused pane's composer; on the
+          phone the strip, the map and the toast cover its job. */}
+      {isMobile ? null : <Switchboard files={files} flows={flows} project={project} onOpenFile={openSwitchboardFile} />}
 
       {residual.length ? <ResidualStrip items={residual} onSelect={openSwitchboardFile} /> : null}
     </div>
