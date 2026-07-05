@@ -1,9 +1,9 @@
 import type { Message } from ".";
 import type { en } from "./en";
 
-/* Ukrainian mirror of en.ts. The `satisfies` guard fails the build if a key
-   is missing or extra, keeping both locales in lockstep. */
-export const uk = {
+/* Ukrainian mirror of en.ts. The `Record<keyof typeof en, …>` annotation fails
+   the build if a key is missing or extra, keeping both locales in lockstep. */
+export const uk: Record<keyof typeof en, Message> = {
   "common.serverUnavailable": "сервер недоступний",
   "common.loading": "завантаження…",
   "common.loadingCap": "Завантаження…",
@@ -464,4 +464,4 @@ export const uk = {
   "mobile.tapNode": "Тапни вузол — розмова відкриється на весь екран",
   "mobile.agent": "агент",
   "mobile.openMap": "Відкрити карту проєкту",
-} satisfies Record<keyof typeof en, Message>;
+};
