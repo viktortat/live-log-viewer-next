@@ -7,6 +7,7 @@ import { useLocale } from "@/lib/i18n";
 import type { BoardTask } from "@/lib/tasks/types";
 import type { FileEntry } from "@/lib/types";
 
+import { useLinkDrag } from "@/components/AgentLink";
 import { TargetChecklist } from "@/components/tasks/TargetChecklist";
 import { pushTaskToast } from "@/components/tasks/taskToast";
 import { nextTaskStatus, TASK_TONES, taskTitle } from "@/components/tasks/taskModel";
@@ -19,6 +20,19 @@ import { TASK_BODY_MAX, TASK_W, taskRect, type SchemeRect } from "./taskGeometry
 /* Below this zoom the card text is unreadable: an edit click glides first. */
 const EDIT_MIN_Z = 0.55;
 const AUTOSAVE_MS = 900;
+
+/* A blur that happens because the OS took the window itself (keyboard-layout
+   switcher, alt-tab) must not end the edit: the layout hotkey is how text
+   gets typed here, and the caret belongs back when the window returns. The
+   commit runs only for in-page blurs; on a window blur the field re-grabs
+   focus once the window is active again. */
+function commitUnlessWindowBlur(el: HTMLTextAreaElement | null, commit: () => void): void {
+  if (document.hasFocus()) {
+    commit();
+    return;
+  }
+  window.addEventListener("focus", () => el?.focus(), { once: true });
+}
 
 export interface TaskCardHandlers {
   patch: (id: string, patch: { text?: string; status?: BoardTask["status"]; pos?: { x: number; y: number } }) => Promise<string | null>;
@@ -384,8 +398,10 @@ export const TaskCard = memo(function TaskCard({
       });
       return;
     }
-    /* A stationary press on the text is the inline-edit gesture. */
-    if ((event.target as HTMLElement).closest("[data-task-body]")) beginEdit();
+    /* A stationary press anywhere on the card is the inline-edit gesture —
+       buttons, action chips and popovers already opted out at press time, so
+       a click that landed on padding or an assignment chip edits too. */
+    beginEdit();
   };
 
   const tone = TASK_TONES[task.status];
@@ -393,6 +409,18 @@ export const TaskCard = memo(function TaskCard({
   const rest = task.text.includes("\n") ? task.text.slice(task.text.indexOf("\n") + 1) : "";
   const byPath = new Map(files.map((file) => [file.path, file]));
   const lifted = editing || drag !== null || pop !== null;
+
+  /* The handoff gesture, task-flavored: pull the arrow off the «надіслати»
+     pill onto a pane to deliver the task there; a drop on empty canvas means
+     «нікого підходящого» — it opens the spawn popover for a fresh agent. */
+  const link = useLinkDrag({
+    onDrop: (hit) => {
+      if (deliveryBlocked()) return null;
+      handlers.send(task, [hit.file.path]);
+      return t("tasks.linkSent", { title: cleanTitle(hit.file.title, 48) });
+    },
+    onMiss: () => setPop("spawn"),
+  });
 
   return (
     <div
@@ -418,7 +446,7 @@ export const TaskCard = memo(function TaskCard({
             ref={editRef}
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
-            onBlur={commitEdit}
+            onBlur={() => commitUnlessWindowBlur(editRef.current, commitEdit)}
             onKeyDown={(event) => {
               if (event.key === "Escape") {
                 event.preventDefault();
@@ -460,11 +488,16 @@ export const TaskCard = memo(function TaskCard({
           lifted ? "" : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100"
         } transition-opacity`}
       >
+        {/* One pill for both deliveries: drag the arrow onto a pane to send
+            the task there, drop it on empty canvas to spawn a fresh agent.
+            A plain click keeps the checklist fallback (multi-send / no aim). */}
         <button
           type="button"
-          className="inline-flex h-7 items-center gap-1 rounded-full border border-line bg-panel px-2 text-[10.5px] font-semibold text-dim shadow-card hover:border-accent/45 hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+          className="inline-flex h-7 touch-none items-center gap-1 rounded-full border border-line bg-panel px-2 text-[10.5px] font-semibold text-dim shadow-card hover:border-accent/45 hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
           title={t("tasks.sendTitle")}
+          onPointerDown={link.onPillPointerDown}
           onClick={() => {
+            if (link.consumeClick()) return;
             const selection = handlers.selectionPaths();
             if (selection.length) {
               guardedSend(task, selection);
@@ -477,20 +510,12 @@ export const TaskCard = memo(function TaskCard({
         </button>
         <button
           type="button"
-          className="inline-flex h-7 items-center gap-1 rounded-full border border-line bg-panel px-2 text-[10.5px] font-semibold text-dim shadow-card hover:border-accent/45 hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-          title={t("tasks.spawnTitle")}
-          onClick={() => setPop((prev) => (prev === "spawn" ? null : "spawn"))}
-        >
-          <Zap className="h-3 w-3" aria-hidden /> {t("tasks.spawn")}
-        </button>
-        <button
-          type="button"
           className="inline-flex h-7 items-center rounded-full border px-2 text-[10.5px] font-bold shadow-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
           style={{ backgroundColor: "#fff", color: tone.color, borderColor: tone.color }}
           title={t("tasks.statusTitle", { label: t(`tasks.status.${task.status}`) })}
           onClick={() => void handlers.patch(task.id, { status: nextTaskStatus(task.status) })}
         >
-          {t(`tasks.status.${task.status}`)}
+          {t("tasks.statusPrefix")}: {t(`tasks.status.${task.status}`)}
         </button>
         <button
           type="button"
@@ -517,6 +542,7 @@ export const TaskCard = memo(function TaskCard({
         <SendPicker task={task} files={files} project={task.project} onSend={guardedSend} onClose={() => setPop(null)} />
       ) : null}
       {pop === "spawn" ? <SpawnPopover task={task} onSpawn={guardedSpawn} onClose={() => setPop(null)} /> : null}
+      {link.overlay}
     </div>
   );
 });
@@ -559,7 +585,7 @@ export function NewTaskCard({
           ref={ref}
           value={text}
           onChange={(event) => setText(event.target.value)}
-          onBlur={commit}
+          onBlur={() => commitUnlessWindowBlur(ref.current, commit)}
           onKeyDown={(event) => {
             if (event.key === "Escape") {
               event.preventDefault();

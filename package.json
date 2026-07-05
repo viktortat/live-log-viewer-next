@@ -1,6 +1,6 @@
 {
   "name": "agent-log-viewer",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "bin": {
     "agent-log-viewer": "bin/cli.mjs"
   },
@@ -52,5 +52,9 @@
     "unrs-resolver"
   ],
   "description": "Local web UI that renders Codex / Claude Code agent logs as a live chat-style feed with a session parentage tree",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Latand/live-log-viewer-next.git"
+  },
   "license": "MIT"
 }
