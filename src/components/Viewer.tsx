@@ -1,6 +1,6 @@
 "use client";
 
-import { X } from "lucide-react";
+import { Filter, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAgentChimes } from "@/hooks/useAgentChimes";
@@ -11,7 +11,7 @@ import { useIsMobile } from "@/hooks/useIsMobile";
 import { type TFunction, useLocale } from "@/lib/i18n";
 import type { FileEntry } from "@/lib/types";
 
-import { attentionId, buildAttentionQueue, type AttentionItem } from "./attention";
+import { attentionId, buildAttentionQueue, nextAttention, type AttentionItem } from "./attention";
 import { OverviewBoard } from "./OverviewBoard";
 import { ProjectDashboard, queueColumnOpen } from "./ProjectDashboard";
 import { OVERVIEW, projectKey } from "./projectModel";
@@ -162,11 +162,62 @@ export function Viewer() {
     };
   }, [queueOpen]);
 
+  /* «Show only needs me» filter: React-only state that auto-disables when the
+     queue empties — a filter surviving reload would silently gray the whole
+     board (D6). The popover follows the same emptiness rule. */
+  const [attentionFilter, setAttentionFilter] = useState(false);
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
-    if (!queue.length) setQueueOpen(false);
+    if (queue.length) return;
+    setQueueOpen(false);
+    setAttentionFilter(false);
   }, [queue.length]);
   /* eslint-enable react-hooks/set-state-in-effect */
+
+  /* The jump channel into the board: nonce so repeated jumps to the same node
+     re-flash (D9); consumed by ProjectDashboard's pendingFocusRef path. */
+  const [focusRequest, setFocusRequest] = useState<{ path: string; nonce: number } | null>(null);
+  const requestFocus = useCallback((path: string) => {
+    setFocusRequest((prev) => ({ path, nonce: (prev?.nonce ?? 0) + 1 }));
+  }, []);
+
+  /* The N-cycle position is an id, not an index: an item answered elsewhere
+     drops out without moving the pointer's neighbors (D12). */
+  const cycleRef = useRef<string | null>(null);
+
+  /* N never leaves the current project (D4): the same items and order
+     buildAttentionQueue(files, now, project) yields, taken off the global memo. */
+  const projectQueue = useMemo(
+    () => (project === OVERVIEW ? [] : queue.filter((item) => item.project === project)),
+    [queue, project],
+  );
+
+  useEffect(() => {
+    /* Same guard as useSchemeCamera: hotkeys stay quiet while a composer or
+       any form control is focused. */
+    const typing = (target: EventTarget | null) => {
+      const el = target as HTMLElement | null;
+      if (!el || !el.tagName) return false;
+      return ["INPUT", "TEXTAREA", "SELECT", "BUTTON"].includes(el.tagName) || el.isContentEditable;
+    };
+    const onDown = (event: KeyboardEvent) => {
+      if (typing(event.target)) return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.key === "n" || event.key === "N") {
+        const next = nextAttention(projectQueue, cycleRef.current, event.shiftKey ? -1 : 1);
+        if (!next) return;
+        event.preventDefault();
+        cycleRef.current = next.id;
+        requestFocus(next.file.path);
+      } else if (event.key === "f" || event.key === "F") {
+        if (!queue.length) return;
+        event.preventDefault();
+        setAttentionFilter((value) => !value);
+      }
+    };
+    window.addEventListener("keydown", onDown);
+    return () => window.removeEventListener("keydown", onDown);
+  }, [projectQueue, queue.length, requestFocus]);
 
   /* A popover click is a deliberate act, so unlike the N hotkey it may switch
      the project; the focus hand-off glides the board to the node. */
@@ -174,8 +225,10 @@ export function Viewer() {
     (item: AttentionItem) => {
       setQueueOpen(false);
       if (item.project !== project) selectProject(item.project);
+      cycleRef.current = item.id;
+      requestFocus(item.file.path);
     },
-    [project, selectProject],
+    [project, selectProject, requestFocus],
   );
 
   useEffect(() => {
@@ -220,15 +273,30 @@ export function Viewer() {
         <div className="pointer-events-none fixed right-4 top-4 z-50 flex flex-col items-end gap-2">
           {queue.length ? (
             <div ref={queueRef} className="pointer-events-auto relative">
-              <button
-                type="button"
-                className="rounded-full border border-[#e0ae45]/45 bg-[#fff9ed] px-3 py-1 text-[12px] font-bold text-[#8a5a00] shadow-card hover:border-[#e0ae45]/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-                aria-expanded={queueOpen}
-                title={t("attention.openQueue")}
-                onClick={() => setQueueOpen((value) => !value)}
-              >
-                {t("attention.badge", { count: queue.length })}
-              </button>
+              <div className="flex items-center overflow-hidden rounded-full border border-[#e0ae45]/45 bg-[#fff9ed] shadow-card">
+                <button
+                  type="button"
+                  className="px-3 py-1 text-[12px] font-bold text-[#8a5a00] hover:bg-[#e0ae45]/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/40"
+                  aria-expanded={queueOpen}
+                  title={t("attention.openQueue")}
+                  onClick={() => setQueueOpen((value) => !value)}
+                >
+                  {t("attention.badge", { count: queue.length })}
+                </button>
+                <div className="h-4 w-px shrink-0 bg-[#e0ae45]/45" aria-hidden />
+                <button
+                  type="button"
+                  className={`px-2 py-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/40 ${
+                    attentionFilter ? "bg-[#e0ae45]/30 text-[#8a5a00]" : "text-[#b8860b]/70 hover:bg-[#e0ae45]/15 hover:text-[#8a5a00]"
+                  }`}
+                  aria-pressed={attentionFilter}
+                  title={attentionFilter ? t("attention.filterOff") : t("attention.filterOn")}
+                  aria-label={attentionFilter ? t("attention.filterOff") : t("attention.filterOn")}
+                  onClick={() => setAttentionFilter((value) => !value)}
+                >
+                  <Filter className="h-3.5 w-3.5" aria-hidden />
+                </button>
+              </div>
               {queueOpen ? (
                 <div className="absolute right-0 top-[calc(100%+6px)] max-h-[60vh] w-[340px] overflow-y-auto rounded-[10px] border border-line bg-panel p-1.5 shadow-card">
                   <div className="px-2.5 pb-1 pt-1.5 text-[10.5px] font-bold uppercase tracking-wide text-dim">
