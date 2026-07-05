@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 
+import { useLocale } from "@/lib/i18n";
+
 import { GlyphIcon, Trash2 } from "../icons";
 import { Lightbox } from "./Lightbox";
 
@@ -16,6 +18,7 @@ type Gone = "deleted" | "missing";
  * pile up forever, since nothing else ever cleans them.
  */
 export function InboxImageCard({ name, path }: { name: string; path: string }) {
+  const { t } = useLocale();
   const [view, setView] = useState<View>("thumb");
   const [gone, setGone] = useState<Gone | null>(null);
   const [confirming, setConfirming] = useState(false);
@@ -37,12 +40,12 @@ export function InboxImageCard({ name, path }: { name: string; path: string }) {
       const res = await fetch(src, { method: "DELETE" });
       const json = (await res.json()) as { ok?: boolean; error?: string };
       if (!res.ok || !json.ok) {
-        setError(json.error ?? "не вдалося видалити");
+        setError(json.error ?? t("common.failedDelete"));
         return;
       }
       setGone("deleted");
     } catch {
-      setError("сервер недоступний");
+      setError(t("common.serverUnavailable"));
     } finally {
       setDeleting(false);
       setConfirming(false);
@@ -58,7 +61,7 @@ export function InboxImageCard({ name, path }: { name: string; path: string }) {
         >
           <GlyphIcon name="image" className="h-3.5 w-3.5" />
           <span className="truncate">{name}</span>
-          <span className="shrink-0">· {gone === "deleted" ? "видалено з диска" : "файла вже немає на диску"}</span>
+          <span className="shrink-0">· {gone === "deleted" ? t("inbox.deleted") : t("inbox.fileGone")}</span>
         </span>
       </div>
     );
@@ -77,7 +80,7 @@ export function InboxImageCard({ name, path }: { name: string; path: string }) {
             <GlyphIcon name="image" className="h-4 w-4" />
           </span>
           <span className="truncate font-mono text-[12px]">{name}</span>
-          <span className="shrink-0 text-[12px] font-semibold text-accent">показати</span>
+          <span className="shrink-0 text-[12px] font-semibold text-accent">{t("common.show")}</span>
         </button>
       </div>
     );
@@ -90,7 +93,7 @@ export function InboxImageCard({ name, path }: { name: string; path: string }) {
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={src}
-          alt={`вкладена картинка ${name}`}
+          alt={t("inbox.attachedAlt", { name })}
           onClick={() => setView("full")}
           onError={() => setGone("missing")}
           className="ml-auto block max-h-[240px] cursor-zoom-in rounded-[14px] border border-line"
@@ -100,41 +103,41 @@ export function InboxImageCard({ name, path }: { name: string; path: string }) {
             {name}
           </span>
           <button type="button" onClick={() => setView("chip")} className="shrink-0 text-dim hover:text-ink">
-            згорнути
+            {t("common.collapse")}
           </button>
           {confirming ? (
             <span className="inline-flex shrink-0 items-center gap-1 rounded-[10px] border border-err/30 bg-[#fff5f5] px-1.5 py-0.5">
-              <span className="px-1 font-semibold text-err">Видалити файл з диска?</span>
+              <span className="px-1 font-semibold text-err">{t("inbox.confirmDelete")}</span>
               <button
                 type="button"
                 className="rounded-lg bg-err px-2 py-0.5 font-bold text-white disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-err/50"
                 disabled={deleting}
                 onClick={remove}
               >
-                {deleting ? "видаляю…" : "Так, видалити"}
+                {deleting ? t("trash.deleting") : t("trash.confirmYes")}
               </button>
               <button
                 type="button"
                 className="rounded-lg border border-line bg-panel px-2 py-0.5 font-semibold text-dim focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
                 onClick={() => setConfirming(false)}
               >
-                Скасувати
+                {t("common.cancel")}
               </button>
             </span>
           ) : (
             <button
               type="button"
               onClick={() => setConfirming(true)}
-              aria-label={`Видалити ${name} з диска`}
+              aria-label={t("inbox.deleteAria", { name })}
               className="inline-flex shrink-0 items-center gap-1 rounded-full border border-line bg-panel px-2 py-0.5 font-semibold text-dim hover:border-err/40 hover:text-err focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
             >
-              <Trash2 className="h-3 w-3" aria-hidden /> видалити з диска
+              <Trash2 className="h-3 w-3" aria-hidden /> {t("inbox.deleteFromDisk")}
             </button>
           )}
           {error ? <span className="shrink-0 font-semibold text-err">{error}</span> : null}
         </div>
       </div>
-      {view === "full" ? <Lightbox src={src} alt={`вкладена картинка ${name}`} caption={path} onClose={() => setView("thumb")} /> : null}
+      {view === "full" ? <Lightbox src={src} alt={t("inbox.attachedAlt", { name })} caption={path} onClose={() => setView("thumb")} /> : null}
     </div>
   );
 }

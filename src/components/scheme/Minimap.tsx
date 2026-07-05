@@ -3,6 +3,7 @@
 import { useRef } from "react";
 
 import { engineColor } from "@/components/utils";
+import { useLocale } from "@/lib/i18n";
 
 import type { SchemeLayout } from "./layout";
 
@@ -30,6 +31,7 @@ export function Minimap({
   vp: { w: number; h: number };
   onJump: (wx: number, wy: number) => void;
 }) {
+  const { t } = useLocale();
   const ref = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef(false);
   const scale = Math.min(MAP_W / layout.width, MAP_H / layout.height);
@@ -48,7 +50,7 @@ export function Minimap({
       data-scheme-ui
       className="absolute bottom-3 right-3 z-40 cursor-pointer overflow-hidden rounded-[10px] border border-line bg-panel/95 shadow-card"
       style={{ width: MAP_W, height: MAP_H }}
-      title="Мінімапа — клікни або тягни, щоб перейти"
+      title={t("minimap.title")}
       onPointerDown={(event) => {
         event.stopPropagation();
         dragRef.current = true;

@@ -2,6 +2,7 @@ import type { Flow } from "@/lib/flows/types";
 import type { FileEntry } from "@/lib/types";
 
 import type { DeckRound } from "@/components/flows/RoundDeck";
+import { draftSrc } from "@/components/DraftAgentPane";
 import { claimedReviewerPaths, flowByImplementer } from "@/components/flows/flowModel";
 import { type BranchGroup, descendantsOf, isChildConversation, kidsIndex } from "@/components/projectModel";
 import { engineColor } from "@/components/utils";
@@ -47,6 +48,8 @@ export interface SchemeNode extends SchemeRect {
 export interface DraftNode extends SchemeRect {
   key: string;
   id: string;
+  /** Source transcript when the draft is a handoff hanging under its parent. */
+  src?: string;
 }
 
 export interface SchemeEdge {
@@ -132,6 +135,19 @@ export function buildSchemeLayout(
   const deckFor = flowByImplementer(flows);
   const claimed = claimedReviewerPaths(flows);
   let cursor = PAD;
+
+  /* Handoff drafts hang under their source pane like a child; drafts whose
+     source is not on the scheme (or plain «+ Агент» ones) trail the row. */
+  const drafts: DraftNode[] = [];
+  const draftsBySrc = new Map<string, string[]>();
+  for (const id of draftIds) {
+    const src = draftSrc(id);
+    if (!src) continue;
+    const list = draftsBySrc.get(src);
+    if (list) list.push(id);
+    else draftsBySrc.set(src, [id]);
+  }
+  const placedDrafts = new Set<string>();
 
   const toMini = (file: FileEntry): MiniItem => ({ file, branches: kids.get(file.path)?.length ?? 0 });
 
@@ -224,6 +240,24 @@ export function buildSchemeLayout(
         });
         cx += MINI_W + GAP_X;
       }
+      /* Handoff drafts of this conversation take the next child slots: the
+         not-yet-spawned agent already reads as a branch of its parent. */
+      for (const id of draftsBySrc.get(col.file.path) ?? []) {
+        placedDrafts.add(id);
+        const dy = y + h + GAP_Y;
+        drafts.push({ key: "draft::" + id, id, src: col.file.path, x: cx, y: dy, w: NODE_W, h: CHILD_H });
+        edges.push({
+          to: "draft::" + id,
+          x1: x + 40,
+          y1: y + h,
+          x2: cx + NODE_W / 2,
+          y2: dy,
+          color: "#5a51e0",
+          live: false,
+          dashed: true,
+        });
+        cx += NODE_W + GAP_X;
+      }
       const used = cx - GAP_X - (x + INDENT);
       return used > 0 ? Math.max(NODE_W, INDENT + used) : NODE_W;
     };
@@ -293,9 +327,9 @@ export function buildSchemeLayout(
       ) + GROUP_GAP;
   }
 
-  /* Drafts trail the row like fresh top-level nodes: root-sized, no edges. */
-  const drafts: DraftNode[] = [];
+  /* Remaining drafts trail the row like fresh top-level nodes: root-sized, no edges. */
   for (const id of draftIds) {
+    if (placedDrafts.has(id)) continue;
     drafts.push({ key: "draft::" + id, id, x: cursor, y: PAD, w: NODE_W, h: ROOT_H });
     cursor += NODE_W + GROUP_GAP;
   }

@@ -3,6 +3,8 @@
 import { Bell, BellOff } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { useLocale } from "@/lib/i18n";
+
 function b64ToBytes(value: string): ArrayBuffer {
   const padded = value + "=".repeat((4 - (value.length % 4)) % 4);
   const raw = atob(padded.replace(/-/g, "+").replace(/_/g, "/"));
@@ -12,6 +14,7 @@ function b64ToBytes(value: string): ArrayBuffer {
 }
 
 export function PushBell() {
+  const { t } = useLocale();
   const [enabled, setEnabled] = useState(false);
   const [supported, setSupported] = useState(false);
 
@@ -54,8 +57,8 @@ export function PushBell() {
   return (
     <button
       className="inline-flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full border border-line bg-panel text-dim hover:text-ink disabled:opacity-45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-      title={supported ? (enabled ? "Push-сповіщення увімкнено" : "Увімкнути push-сповіщення") : "Push потребує HTTPS"}
-      aria-label={supported ? (enabled ? "Вимкнути push-сповіщення" : "Увімкнути push-сповіщення") : "Push потребує HTTPS"}
+      title={supported ? (enabled ? t("push.enabled") : t("push.enable")) : t("push.needsHttps")}
+      aria-label={supported ? (enabled ? t("push.disable") : t("push.enable")) : t("push.needsHttps")}
       aria-pressed={enabled}
       disabled={!supported}
       onClick={toggle}

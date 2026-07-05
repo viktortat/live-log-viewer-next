@@ -5,6 +5,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { X } from "@/components/icons";
+import { useLocale } from "@/lib/i18n";
 import type { FileEntry } from "@/lib/types";
 
 import { cleanTitle, engineBadge } from "./utils";
@@ -230,6 +231,7 @@ export function useAgentLink(source: FileEntry, onDragStart?: () => void) {
  * conversation is resumed in a fresh tmux window first.
  */
 function LinkAskCard({ source, drop, onClose }: { source: FileEntry; drop: DropState; onClose: () => void }) {
+  const { t } = useLocale();
   const cardRef = useRef<HTMLDivElement>(null);
   const [ask, setAsk] = useState("");
   const [busy, setBusy] = useState(false);
@@ -266,9 +268,7 @@ function LinkAskCard({ source, drop, onClose }: { source: FileEntry; drop: DropS
     if (busy || !ask.trim()) return;
     setBusy(true);
     setStatus(null);
-    const text =
-      `Тобі передали контекст іншого агента — розмову «${cleanTitle(source.title, 80)}». ` +
-      `Її транскрипт: ${source.path} — спочатку прочитай цей файл, щоб мати повний контекст, а тоді виконай прохання нижче.\n\n${ask.trim()}`;
+    const text = t("link.handoffContext", { title: cleanTitle(source.title, 80), path: source.path, ask: ask.trim() });
     try {
       const res = await fetch("/api/tmux", {
         method: "POST",
@@ -277,15 +277,15 @@ function LinkAskCard({ source, drop, onClose }: { source: FileEntry; drop: DropS
       });
       const json = (await res.json()) as { ok?: boolean; target?: string; spawned?: boolean; error?: string };
       if (!res.ok || !json.ok) {
-        setStatus({ kind: "err", text: json.error ?? "не вдалося надіслати" });
+        setStatus({ kind: "err", text: json.error ?? t("common.failedSend") });
         return;
       }
       setStatus({
         kind: "ok",
-        text: json.spawned ? `агент прокинувся у tmux ${json.target ?? ""}` : `надіслано у tmux ${json.target ?? ""}`,
+        text: json.spawned ? t("link.woke", { target: json.target ?? "" }) : t("link.sentTo", { target: json.target ?? "" }),
       });
     } catch {
-      setStatus({ kind: "err", text: "сервер недоступний" });
+      setStatus({ kind: "err", text: t("common.serverUnavailable") });
     } finally {
       setBusy(false);
     }
@@ -299,10 +299,10 @@ function LinkAskCard({ source, drop, onClose }: { source: FileEntry; drop: DropS
     >
       <div className="flex items-center gap-1.5">
         <Link2 className="h-3.5 w-3.5 shrink-0" style={{ color: LINK_COLOR }} aria-hidden />
-        <span className="min-w-0 flex-1 truncate text-[12px] font-bold">звʼязати агентів</span>
+        <span className="min-w-0 flex-1 truncate text-[12px] font-bold">{t("link.title")}</span>
         <button
           type="button"
-          aria-label="Закрити картку звʼязування"
+          aria-label={t("link.close")}
           onClick={onClose}
           className="inline-flex shrink-0 items-center rounded-[8px] border border-line bg-bg px-1.5 py-0.5 text-dim hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
         >
@@ -311,7 +311,7 @@ function LinkAskCard({ source, drop, onClose }: { source: FileEntry; drop: DropS
       </div>
       <div className="flex flex-col gap-1.5 rounded-[8px] border border-line bg-bg px-2 py-2">
         <div className="flex min-w-0 items-center gap-1.5">
-          <span className="w-[64px] shrink-0 text-[10px] font-semibold text-dim">кому</span>
+          <span className="w-[64px] shrink-0 text-[10px] font-semibold text-dim">{t("link.to")}</span>
           <span className="shrink-0 rounded-full px-1.5 py-0.5 text-[9.5px] font-bold" style={badge.style}>
             {badge.label}
           </span>
@@ -320,22 +320,22 @@ function LinkAskCard({ source, drop, onClose }: { source: FileEntry; drop: DropS
           </span>
         </div>
         <div className="flex min-w-0 items-center gap-1.5">
-          <span className="w-[64px] shrink-0 text-[10px] font-semibold text-dim">контекст</span>
+          <span className="w-[64px] shrink-0 text-[10px] font-semibold text-dim">{t("link.context")}</span>
           <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-ink" title={source.path}>
             {source.path}
           </span>
         </div>
       </div>
       <p className="text-[10.5px] text-dim">
-        Агент отримає шлях до цього транскрипта з пропозицією прочитати розмову. Додай, що саме в нього попросити:
+        {t("link.explain")}
       </p>
       <textarea
         value={ask}
         onChange={(event) => setAsk(event.target.value)}
         rows={4}
         autoFocus
-        placeholder="що зробити з цим контекстом…"
-        aria-label="Прохання для звʼязаного агента"
+        placeholder={t("link.placeholder")}
+        aria-label={t("link.askAria")}
         className="resize-y rounded-[8px] border border-line bg-bg px-2 py-1.5 text-[12px] text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
       />
       <div className="flex items-center">
@@ -346,10 +346,10 @@ function LinkAskCard({ source, drop, onClose }: { source: FileEntry; drop: DropS
           className="ml-auto rounded-[8px] border px-3 py-1.5 text-[12px] font-bold text-white hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:opacity-40"
           style={{ backgroundColor: LINK_COLOR, borderColor: LINK_COLOR }}
         >
-          {busy ? "звʼязую…" : "▶ Звʼязати"}
+          {busy ? t("link.linking") : t("link.link")}
         </button>
       </div>
-      {busy ? <span className="text-[10.5px] text-dim">якщо агент не запущений — резюмую його вікно (до хвилини)…</span> : null}
+      {busy ? <span className="text-[10.5px] text-dim">{t("link.resuming")}</span> : null}
       {status ? (
         <span className={`text-[11px] font-semibold ${status.kind === "ok" ? "text-ok" : "text-err"}`}>{status.text}</span>
       ) : null}

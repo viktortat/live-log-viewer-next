@@ -3,6 +3,7 @@
 import { CornerDownRight } from "lucide-react";
 
 import { X } from "@/components/icons";
+import { useLocale } from "@/lib/i18n";
 import type { FileEntry } from "@/lib/types";
 
 import { CtxChip } from "./PlanChip";
@@ -33,6 +34,7 @@ function toneClass(tone: SwitchCardTone): string {
 }
 
 export function SwitchCard({ file, title, project, currentProject, descendants, statusLine, size, tone, onOpen, onArchive }: Props) {
+  const { t } = useLocale();
   const badge = engineBadge(file);
   const large = size === "large";
   return (
@@ -40,7 +42,7 @@ export function SwitchCard({ file, title, project, currentProject, descendants, 
       className={`group relative flex ${large ? "h-[150px] w-[300px]" : "h-[108px] w-[220px]"} shrink-0 flex-col rounded-[8px] border p-3 shadow-card transition-colors hover:border-accent/45 ${toneClass(tone)}`}
       role="button"
       tabIndex={0}
-      aria-label={`Відкрити колонкою ${cleanTitle(title, 80)}`}
+      aria-label={t("switchCard.openColumn", { title: cleanTitle(title, 80) })}
       onClick={() => onOpen(file)}
       onKeyDown={(event) => {
         if (event.key === "Enter") onOpen(file);
@@ -50,7 +52,7 @@ export function SwitchCard({ file, title, project, currentProject, descendants, 
         <button
           type="button"
           className="absolute right-1.5 top-1.5 z-10 hidden h-5 w-5 items-center justify-center rounded-full border border-line bg-bg text-dim hover:border-err/50 hover:text-err focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 group-hover:flex group-focus-within:flex"
-          aria-label="Прибрати з пульта"
+          aria-label={t("switchCard.remove")}
           onClick={(event) => {
             event.stopPropagation();
             onArchive(file);

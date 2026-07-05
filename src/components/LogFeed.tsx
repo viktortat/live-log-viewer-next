@@ -5,6 +5,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { ArrowDown, ChevronUp, Sparkle } from "@/components/icons";
 import { useLogTail } from "@/hooks/useLogTail";
+import { getLocale, useLocale } from "@/lib/i18n";
 import type { FileEntry } from "@/lib/types";
 
 import { isAwaitingUser } from "@/hooks/useSwitchboardData";
@@ -51,6 +52,7 @@ interface Props {
 }
 
 export function LogFeed({ file, files, onSelect, showSvc, lineFilter, onStatus, paused, follow, setFollow, compact = false }: Props) {
+  const { t } = useLocale();
   /* The scroll magnet lives per feed instance, so each column remembers its
      own state across polls: glued to the live tail, or released by the user. */
   const [magnet, setMagnetState] = useState(follow);
@@ -114,7 +116,7 @@ export function LogFeed({ file, files, onSelect, showSvc, lineFilter, onStatus, 
       return;
     }
     if (hadQuestionRef.current && file.proc && file.proc !== "running") {
-      queueMicrotask(() => setEndedQuestion("агент завершився"));
+      queueMicrotask(() => setEndedQuestion(t("feed.agentEnded")));
       hadQuestionRef.current = false;
     }
   }, [file?.pendingQuestion?.toolUseId, file?.proc, file]);
@@ -131,7 +133,7 @@ export function LogFeed({ file, files, onSelect, showSvc, lineFilter, onStatus, 
   const visibleItems = hiddenLocal ? feed.items.slice(-visibleCount) : feed.items;
 
   useEffect(() => {
-    const time = tail.tickTime?.toLocaleTimeString("uk", { hour12: false }) ?? "";
+    const time = tail.tickTime?.toLocaleTimeString(getLocale() === "uk" ? "uk-UA" : "en-US", { hour12: false }) ?? "";
     if (tail.error) onStatus(tail.error);
     else if (file) onStatus(`${(tail.size / 1024).toFixed(0)} kB${time ? " · " + time : ""}`);
     else onStatus("");
@@ -191,10 +193,10 @@ export function LogFeed({ file, files, onSelect, showSvc, lineFilter, onStatus, 
   const lastItem = feed.items.at(-1);
   const working: { icon: LucideIcon; label: string } =
     lastItem?.kind === "cmd" && lastItem.call.status === "run"
-      ? { icon: Wrench, label: `виконує ${lastItem.call.cmd.split(/[\s:]/, 1)[0] || "інструмент"}…` }
+      ? { icon: Wrench, label: t("feed.running", { tool: lastItem.call.cmd.split(/[\s:]/, 1)[0] || t("feed.tool") }) }
       : lastItem?.kind === "think"
-        ? { icon: Sparkle, label: "думає…" }
-        : { icon: Sparkle, label: "працює…" };
+        ? { icon: Sparkle, label: t("feed.thinking") }
+        : { icon: Sparkle, label: t("feed.working") };
 
   const jumpToTail = () => {
     const el = scroller.current;
@@ -212,16 +214,16 @@ export function LogFeed({ file, files, onSelect, showSvc, lineFilter, onStatus, 
                 pulse ? "scale-125" : "scale-100"
               }`}
             >
-              <ArrowDownToLine className="h-3 w-3" aria-hidden /> живий хвіст
+              <ArrowDownToLine className="h-3 w-3" aria-hidden /> {t("feed.liveTail")}
             </div>
           ) : null
         ) : (
           <button
             className="absolute bottom-2 right-3 z-10 inline-flex items-center gap-1 rounded-full border border-line bg-panel px-2.5 py-1 text-[11px] font-semibold text-ink shadow-card hover:border-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-            aria-label="Повернутись до живого хвоста"
+            aria-label={t("feed.backToLive")}
             onClick={jumpToTail}
           >
-            <ArrowDown className="h-3.5 w-3.5" aria-hidden /> {newCount ? `${newCount} нових` : "вниз"}
+            <ArrowDown className="h-3.5 w-3.5" aria-hidden /> {newCount ? t("feed.newCount", { count: newCount }) : t("feed.down")}
           </button>
         )
       ) : null}
@@ -238,7 +240,7 @@ export function LogFeed({ file, files, onSelect, showSvc, lineFilter, onStatus, 
       >
       <div ref={content} className={compact ? "px-3 pb-4 text-[13px]" : "mx-auto w-full max-w-[1060px] px-6 pb-16"}>
         {!file ? (
-          <div className="mt-[20vh] text-center text-dim">Вибери лог зліва — стрічка оновлюється сама</div>
+          <div className="mt-[20vh] text-center text-dim">{t("feed.pickLog")}</div>
         ) : (
           <>
             {compact && canRevealOlder ? (
@@ -248,10 +250,10 @@ export function LogFeed({ file, files, onSelect, showSvc, lineFilter, onStatus, 
                 onClick={revealOlder}
               >
                 {tail.loadingOlder ? (
-                  "завантаження…"
+                  t("common.loading")
                 ) : (
                   <>
-                    <ChevronUp className="h-3.5 w-3.5" aria-hidden /> показати раніше
+                    <ChevronUp className="h-3.5 w-3.5" aria-hidden /> {t("feed.showEarlier")}
                   </>
                 )}
               </button>
@@ -263,14 +265,14 @@ export function LogFeed({ file, files, onSelect, showSvc, lineFilter, onStatus, 
                 onClick={revealOlder}
               >
                 {tail.loadingOlder
-                  ? "завантаження…"
+                  ? t("common.loading")
                   : hiddenLocal
-                    ? `показати раніше (сховано ${hiddenLocal})`
-                    : "завантажити раніше з файлу"}
+                    ? t("feed.showEarlierHidden", { count: hiddenLocal })
+                    : t("feed.loadEarlier")}
               </button>
             ) : null}
             {!compact && !canRevealOlder && feed.items.length ? (
-              <div className="mb-3 text-center text-[11px] text-dim">початок розмови</div>
+              <div className="mb-3 text-center text-[11px] text-dim">{t("feed.startOfConvo")}</div>
             ) : null}
             {compact ? null : <TaskHeader file={file} files={files} onSelect={onSelect} />}
             {feed.items.length ? (
@@ -294,23 +296,23 @@ export function LogFeed({ file, files, onSelect, showSvc, lineFilter, onStatus, 
                 {file.activity === "live" ? <WorkingRow icon={working.icon} label={working.label} /> : null}
                 {file.activity === "recent" && isAwaitingUser(file) ? (
                   <div className="mt-2 flex items-center gap-1.5 text-[11.5px] font-semibold text-[#b8860b]">
-                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#d29a2f]" aria-hidden /> закінчив хід — чекає відповіді
+                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#d29a2f]" aria-hidden /> {t("feed.finishedTurn")}
                   </div>
                 ) : file.activity === "recent" && isSubagent(file) && file.proc !== "running" ? (
                   <div className="mt-2 flex items-center gap-1 text-[11.5px] font-semibold text-accent">
-                    <CornerDownRight className="h-3.5 w-3.5" aria-hidden /> повернувся з результатом
+                    <CornerDownRight className="h-3.5 w-3.5" aria-hidden /> {t("feed.returnedResult")}
                   </div>
                 ) : null}
               </>
             ) : (
               <div className="mt-[14vh] text-center text-dim">
                 {tail.loading
-                  ? "Завантаження…"
+                  ? t("common.loadingCap")
                   : tail.size === 0
-                    ? "Ще без виводу — файл поки порожній"
+                    ? t("feed.noOutput")
                     : feed.hiddenServiceCount
-                      ? `Видимих повідомлень нема — лише службові записи (${feed.hiddenServiceCount}). Натисни «Службові»`
-                      : "Порожньо (немає рядків для показу)"}
+                      ? t("feed.onlyService", { count: feed.hiddenServiceCount })
+                      : t("feed.empty")}
                 {!tail.loading && (file.cmdDesc || file.cmd) ? (
                   <div className="mx-auto mt-3 max-w-[560px]">
                     {file.cmdDesc ? <div className="text-[12.5px] font-semibold text-ink">{file.cmdDesc}</div> : null}

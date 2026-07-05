@@ -1,3 +1,4 @@
+import { getLocale, translate } from "@/lib/i18n";
 import type { FileEntry } from "@/lib/types";
 import { cleanTitle } from "@/lib/title";
 
@@ -8,17 +9,19 @@ export function escText(value: string): string {
 }
 
 export function fmtAge(mtime: number): string {
+  const locale = getLocale();
   const s = Date.now() / 1000 - mtime;
-  if (s < 90) return Math.round(s) + " с тому";
-  if (s < 5400) return Math.round(s / 60) + " хв тому";
-  if (s < 129600) return Math.round(s / 3600) + " год тому";
-  return Math.round(s / 86400) + " д тому";
+  if (s < 90) return translate(locale, "time.agoSec", { n: Math.round(s) });
+  if (s < 5400) return translate(locale, "time.agoMin", { n: Math.round(s / 60) });
+  if (s < 129600) return translate(locale, "time.agoHour", { n: Math.round(s / 3600) });
+  return translate(locale, "time.agoDay", { n: Math.round(s / 86400) });
 }
 
 export function hhmm(ts: unknown): string {
   if (typeof ts !== "string" && typeof ts !== "number") return "";
   const d = new Date(ts);
-  return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString("uk", { hour12: false });
+  const bcp47 = getLocale() === "uk" ? "uk-UA" : "en-US";
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString(bcp47, { hour12: false });
 }
 
 /** Ukrainian plural form: ukPlural(n, "гілка", "гілки", "гілок"). */

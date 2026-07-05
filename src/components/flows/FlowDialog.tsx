@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import type { FlowPreset, FlowsResponse, RoleConfig } from "@/lib/flows/types";
+import { useLocale } from "@/lib/i18n";
 import type { FileEntry } from "@/lib/types";
 
 const EFFORTS = ["low", "medium", "high", "xhigh"] as const;
@@ -21,12 +22,13 @@ function RoleEditor({
   role: RoleConfig;
   onChange: (next: RoleConfig) => void;
 }) {
+  const { t } = useLocale();
   return (
     <div className="flex items-center gap-1.5">
       <span className="w-[86px] shrink-0 text-[10.5px] font-semibold text-dim">{label}</span>
       <select
         value={role.engine}
-        aria-label={`Двигун: ${label}`}
+        aria-label={t("flowDialog.engine", { label })}
         className="h-7 rounded-[8px] border border-line bg-bg px-1.5 text-[11.5px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
         onChange={(event) => onChange({ ...role, engine: event.target.value as RoleConfig["engine"], effort: null })}
       >
@@ -35,8 +37,8 @@ function RoleEditor({
       </select>
       <input
         value={role.model ?? ""}
-        placeholder="модель (дефолт)"
-        aria-label={`Модель: ${label}`}
+        placeholder={t("flowDialog.modelPlaceholder")}
+        aria-label={t("flowDialog.model", { label })}
         className="h-7 w-0 min-w-0 flex-1 rounded-[8px] border border-line bg-bg px-1.5 font-mono text-[11px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
         onChange={(event) => onChange({ ...role, model: event.target.value.trim() || null })}
       />
@@ -47,7 +49,7 @@ function RoleEditor({
           className="h-7 rounded-[8px] border border-line bg-bg px-1.5 text-[11.5px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
           onChange={(event) => onChange({ ...role, effort: event.target.value || null })}
         >
-          <option value="">effort: дефолт</option>
+          <option value="">{t("flowDialog.effortDefault")}</option>
           {EFFORTS.map((effort) => (
             <option key={effort} value={effort}>
               {effort}
@@ -65,6 +67,7 @@ function RoleEditor({
  * the strip and the deck appear with the next files poll.
  */
 export function FlowDialog({ file, onClose }: { file: FileEntry; onClose: () => void }) {
+  const { t } = useLocale();
   const [presets, setPresets] = useState<FlowPreset[]>([]);
   const [presetName, setPresetName] = useState<string | null>(null);
   const [roles, setRoles] = useState(FALLBACK_ROLES);
@@ -117,12 +120,12 @@ export function FlowDialog({ file, onClose }: { file: FileEntry; onClose: () => 
       });
       if (!res.ok) {
         const json = (await res.json().catch(() => null)) as { error?: string } | null;
-        setError(json?.error ?? `не вдалося створити флоу (${res.status})`);
+        setError(json?.error ?? t("flowDialog.createFailed", { status: res.status }));
         return;
       }
       onClose();
     } catch {
-      setError("сервер недоступний");
+      setError(t("common.serverUnavailable"));
     } finally {
       setBusy(false);
     }
@@ -137,13 +140,13 @@ export function FlowDialog({ file, onClose }: { file: FileEntry; onClose: () => 
       }}
     >
       <div className="flex items-center gap-2">
-        <span className="text-[12.5px] font-bold">Запустити флоу</span>
-        <span className="min-w-0 flex-1 truncate text-[10.5px] text-dim">implement → review · ця розмова стає виконавцем</span>
+        <span className="text-[12.5px] font-bold">{t("flowDialog.title")}</span>
+        <span className="min-w-0 flex-1 truncate text-[10.5px] text-dim">{t("flowDialog.subtitle")}</span>
       </div>
 
       {presets.length ? (
         <label className="flex flex-col gap-1 text-[10.5px] font-semibold text-dim">
-          пресет
+          {t("flowDialog.preset")}
           <select
             value={presetName ?? ""}
             className="h-8 rounded-[8px] border border-line bg-bg px-2 text-[12px] font-normal text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
@@ -163,12 +166,12 @@ export function FlowDialog({ file, onClose }: { file: FileEntry; onClose: () => 
         aria-expanded={custom}
         onClick={() => setCustom((value) => !value)}
       >
-        {custom ? "▾ ролі вручну" : "▸ ролі вручну (модель / effort)"}
+        {custom ? t("flowDialog.rolesManualOpen") : t("flowDialog.rolesManual")}
       </button>
       {custom ? (
         <div className="flex flex-col gap-1.5 rounded-[10px] border border-dashed border-line bg-bg/50 p-2">
-          <RoleEditor label="виконавець" role={roles.implementer} onChange={(next) => setRoles((prev) => ({ ...prev, implementer: next }))} />
-          <RoleEditor label="ревʼюер" role={roles.reviewer} onChange={(next) => setRoles((prev) => ({ ...prev, reviewer: next }))} />
+          <RoleEditor label={t("flowDialog.implementer")} role={roles.implementer} onChange={(next) => setRoles((prev) => ({ ...prev, implementer: next }))} />
+          <RoleEditor label={t("flowDialog.reviewer")} role={roles.reviewer} onChange={(next) => setRoles((prev) => ({ ...prev, reviewer: next }))} />
         </div>
       ) : null}
 

@@ -6,12 +6,13 @@ import type { Flow } from "@/lib/flows/types";
 import type { FileEntry } from "@/lib/types";
 
 import { TaskStrip } from "./BranchPane";
-import { clearDraftStorage } from "./DraftAgentPane";
+import { clearDraftStorage, draftSrc, setDraftSrc } from "./DraftAgentPane";
 import { claimedReviewerPaths } from "./flows/flowModel";
 import { SchemeBoard } from "./scheme/SchemeBoard";
 import { Switchboard } from "./Switchboard";
 import { buildBranchGroups, collapsedTrees, projectKey, residualItems } from "./projectModel";
-import { DeleteProjectButton, QuietFileList } from "./ProjectTrash";
+import { ArchiveRestore } from "./icons";
+import { ArchiveProjectButton, DeleteProjectButton, QuietFileList } from "./ProjectTrash";
 import { SoundToggle } from "./SoundToggle";
 import { ResidualStrip } from "./TreeAside";
 import { ukPlural } from "./utils";
@@ -26,6 +27,10 @@ interface Props {
   /** Bumped by Viewer on every openFile so a same-project open re-reads prefs
       even though `project` itself did not change. */
   openNonce: number;
+  /** The project is shelved: hidden from the rail and the overview. */
+  archived: boolean;
+  onArchive: (project: string) => void;
+  onUnarchive: (project: string) => void;
 }
 
 /** Manual additions and removals of scheme nodes, persisted per project. */
@@ -71,7 +76,7 @@ function gotoProject(project: string) {
   location.hash = "#p=" + encodeURIComponent(project);
 }
 
-export function ProjectDashboard({ files, flows, project, openNonce }: Props) {
+export function ProjectDashboard({ files, flows, project, openNonce, archived, onArchive, onUnarchive }: Props) {
   const highlightTimer = useRef<number | null>(null);
   const pendingFocusRef = useRef<string | null>(null);
   const [prefs, setPrefs] = useState<ColumnPrefs>({ manual: [], hidden: [] });
@@ -166,12 +171,30 @@ export function ProjectDashboard({ files, flows, project, openNonce }: Props) {
     sessionStorage.setItem(draftsKey(project), JSON.stringify(next));
   };
 
+  /* randomUUID needs a secure context; LAN http access gets the fallback. */
+  const newDraftId = () =>
+    typeof crypto.randomUUID === "function" ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+
   /* The «+ Агент» flow: a draft conversation lands on the scheme as a full
      pane and the camera glides to it — engine, directory and the first prompt
      are picked right inside that pane. */
   const addDraft = () => {
-    /* randomUUID needs a secure context; LAN http access gets the fallback. */
-    const id = typeof crypto.randomUUID === "function" ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+    const id = newDraftId();
+    persistDrafts([...drafts, id]);
+    pendingFocusRef.current = "draft::" + id;
+  };
+
+  /* The handoff handle under a pane: a draft that continues this conversation
+     hangs right below it, inheriting the transcript and its directory. A
+     repeat click refocuses the existing draft instead of stacking duplicates. */
+  const addHandoffDraft = (file: FileEntry) => {
+    const existing = drafts.find((id) => draftSrc(id) === file.path);
+    if (existing) {
+      flashNode("draft::" + existing);
+      return;
+    }
+    const id = newDraftId();
+    setDraftSrc(id, file.path);
     persistDrafts([...drafts, id]);
     pendingFocusRef.current = "draft::" + id;
   };
@@ -274,6 +297,17 @@ export function ProjectDashboard({ files, flows, project, openNonce }: Props) {
         <h1 className="truncate text-[13.5px] font-bold">{project}</h1>
         <span className="truncate text-[11.5px] text-dim">{statusBits.length ? statusBits.join(" · ") : "зараз нічого не працює"}</span>
         <SoundToggle />
+        {archived ? (
+          <button
+            type="button"
+            className="inline-flex shrink-0 items-center gap-1 rounded-full border border-line bg-bg px-2 py-0.5 text-[11px] font-semibold text-dim hover:border-accent/40 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+            onClick={() => onUnarchive(project)}
+          >
+            <ArchiveRestore className="h-3 w-3" aria-hidden /> Повернути з архіву
+          </button>
+        ) : (
+          <ArchiveProjectButton files={projectFiles} onArchive={() => onArchive(project)} />
+        )}
         <DeleteProjectButton files={projectFiles} />
         <button
           type="button"
@@ -311,6 +345,7 @@ export function ProjectDashboard({ files, flows, project, openNonce }: Props) {
           onClose={closeNode}
           onDraftClose={removeDraft}
           onDraftSpawned={draftSpawned}
+          onHandoff={addHandoffDraft}
         />
       ) : projectFiles.length ? (
         <QuietFileList files={projectFiles} onOpen={openSwitchboardFile} />

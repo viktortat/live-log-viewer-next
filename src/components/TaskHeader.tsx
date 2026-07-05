@@ -3,16 +3,18 @@
 import { useEffect, useState } from "react";
 
 import { Command, Play } from "@/components/icons";
+import { type TFunction, useLocale } from "@/lib/i18n";
 import type { FileEntry } from "@/lib/types";
 
-function activityText(file: FileEntry): string {
-  if (file.activity === "live") return ", працює";
-  if (file.activity === "stalled") return ", перервано";
-  if (file.activity === "recent") return ", закінчив";
+function activityText(t: TFunction, file: FileEntry): string {
+  if (file.activity === "live") return t("task.working");
+  if (file.activity === "stalled") return t("task.interrupted");
+  if (file.activity === "recent") return t("task.finished");
   return "";
 }
 
 export function ProcessStatusChip({ file }: { file: FileEntry }) {
+  const { t } = useLocale();
   if (file.proc === "running") {
     return (
       <span className="inline-flex items-center gap-1 rounded-full bg-[#e5f6ea] px-2 py-0.5 text-[11px] font-bold text-ok">
@@ -23,14 +25,14 @@ export function ProcessStatusChip({ file }: { file: FileEntry }) {
   if (file.proc === "killed" || file.activity === "stalled") {
     return (
       <span className="inline-flex items-center gap-1 rounded-full bg-[#f7e8e8] px-2 py-0.5 text-[11px] font-bold text-err">
-        перервано
+        {t("task.interruptedBadge")}
       </span>
     );
   }
   if (file.proc === "done") {
     return (
       <span className="inline-flex items-center gap-1 rounded-full bg-chip px-2 py-0.5 text-[11px] font-bold text-dim">
-        завершено
+        {t("task.finishedBadge")}
       </span>
     );
   }
@@ -38,6 +40,7 @@ export function ProcessStatusChip({ file }: { file: FileEntry }) {
 }
 
 export function ProcessStatusControls({ file, compact = false }: { file: FileEntry; compact?: boolean }) {
+  const { t } = useLocale();
   const [confirming, setConfirming] = useState(false);
   const [killing, setKilling] = useState(false);
   const [message, setMessage] = useState("");
@@ -61,14 +64,14 @@ export function ProcessStatusControls({ file, compact = false }: { file: FileEnt
       });
       const json = (await res.json()) as { ok?: boolean; pid?: number; error?: string };
       if (!res.ok || !json.ok) {
-        setMessage(json.error ?? "помилка зупинки");
+        setMessage(json.error ?? t("task.stopFailed"));
         setForceNext(true);
         return;
       }
-      setMessage(`надіслано ${forceNext ? "SIGKILL" : "SIGTERM"} PID ${json.pid}`);
+      setMessage(t("task.signalSent", { signal: forceNext ? "SIGKILL" : "SIGTERM", pid: json.pid ?? "" }));
       setConfirming(false);
     } catch {
-      setMessage("сервер недоступний");
+      setMessage(t("common.serverUnavailable"));
       setForceNext(true);
     } finally {
       setKilling(false);
@@ -82,29 +85,29 @@ export function ProcessStatusControls({ file, compact = false }: { file: FileEnt
         confirming ? (
           <span className="inline-flex max-w-full items-center gap-1 rounded-[10px] border border-err/30 bg-[#fff5f5] px-1.5 py-0.5">
             {compact ? null : (
-              <span className="truncate px-1 text-[11px] font-semibold text-err">Точно вбити PID {file.pid}?</span>
+              <span className="truncate px-1 text-[11px] font-semibold text-err">{t("task.confirmKill", { pid: file.pid ?? "" })}</span>
             )}
             <button
               className="rounded-lg bg-err px-2 py-0.5 text-[11px] font-bold text-white disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-err/50"
               disabled={killing}
               onClick={kill}
             >
-              {forceNext ? "SIGKILL" : compact ? `Вбити ${file.pid}` : "Так, вбити"}
+              {forceNext ? "SIGKILL" : compact ? t("task.killPid", { pid: file.pid ?? "" }) : t("task.confirmKillYes")}
             </button>
             <button
               className="rounded-lg border border-line bg-panel px-2 py-0.5 text-[11px] font-semibold text-dim focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
               onClick={() => setConfirming(false)}
             >
-              {compact ? "Ні" : "Скасувати"}
+              {compact ? t("common.no") : t("common.cancel")}
             </button>
           </span>
         ) : (
           <button
             className="rounded-full border border-line bg-panel px-2 py-0.5 text-[11px] font-semibold text-dim hover:border-err/40 hover:text-err focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-            aria-label={`Зупинити процес PID ${file.pid}`}
+            aria-label={t("task.stopAria", { pid: file.pid ?? "" })}
             onClick={() => setConfirming(true)}
           >
-            Вбити
+            {t("task.kill")}
           </button>
         )
       ) : null}
@@ -122,6 +125,7 @@ export function TaskHeader({
   files: FileEntry[];
   onSelect: (file: FileEntry) => void;
 }) {
+  const { t } = useLocale();
   if (file.root === "codex-jobs") {
     const rollout = files.find((entry) => entry.root === "codex-sessions" && entry.parent === file.path);
     return (
@@ -132,17 +136,17 @@ export function TaskHeader({
         {rollout ? (
           <>
             <div className="mb-2 whitespace-pre-line text-[13.5px] font-semibold">
-              Це короткий джоб-лог (лише службові події). Реальна робота Codex — у повній сесії:
+              {t("task.jobLogHint")}
             </div>
             <button
               className="inline-flex items-center gap-1.5 rounded-[10px] border border-line bg-bg px-3 py-1.5 text-[13px] font-semibold text-codex hover:bg-codex-soft"
               onClick={() => onSelect(rollout)}
             >
-              <Command className="h-3.5 w-3.5" aria-hidden /> Відкрити сесію Codex ({(rollout.size / 1024).toFixed(0)} kB{activityText(rollout)})
+              <Command className="h-3.5 w-3.5" aria-hidden /> {t("task.openCodexSession", { size: (rollout.size / 1024).toFixed(0), activity: activityText(t, rollout) })}
             </button>
           </>
         ) : (
-          <div className="text-[13.5px] text-dim">Це короткий джоб-лог. Повна rollout-сесія Codex ще не з&apos;явилась у списку</div>
+          <div className="text-[13.5px] text-dim">{t("task.rolloutMissing")}</div>
         )}
       </div>
     );
@@ -155,13 +159,13 @@ export function TaskHeader({
       </div>
       {file.cmd ? (
         <>
-          <div className="mb-1 text-[13.5px] font-semibold">{file.cmdDesc || "Фонова команда"}</div>
+          <div className="mb-1 text-[13.5px] font-semibold">{file.cmdDesc || t("task.backgroundCommand")}</div>
           <code className="block whitespace-pre-wrap break-words rounded-lg border border-line bg-[#fafafc] px-2.5 py-2 font-mono text-[12.5px]">
             $ {file.cmd}
           </code>
         </>
       ) : (
-        <div className="text-[13.5px] text-dim">Команду, що запустила цю фонову задачу, не знайдено у транскриптах сесії</div>
+        <div className="text-[13.5px] text-dim">{t("task.commandNotFound")}</div>
       )}
     </div>
   );

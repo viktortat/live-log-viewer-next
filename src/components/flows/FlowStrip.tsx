@@ -4,17 +4,18 @@ import { useState } from "react";
 
 import { Pause, Play, RefreshCw, X } from "lucide-react";
 
+import { type MessageKey, useLocale } from "@/lib/i18n";
 import type { Flow, FlowAction } from "@/lib/flows/types";
 
-import { ATTENTION_STATES, patchFlow, STATE_LABELS, VERDICT_GLYPHS, verdictTone } from "./flowModel";
+import { ATTENTION_STATES, patchFlow, stateLabel, VERDICT_GLYPHS, verdictTone } from "./flowModel";
 
 /* The one button the current state is waiting on, rendered prominent. */
-const PENDING_ACTIONS: Partial<Record<Flow["state"], { label: string; action: FlowAction }>> = {
-  waiting_ready: { label: "Почати ревью", action: "advance" },
-  spawn_pending: { label: "Заспавнити ревʼюера", action: "advance" },
-  relay_pending: { label: "Передати зауваження", action: "advance" },
-  needs_decision: { label: "Повторити раунд", action: "retry-round" },
-  done_comment: { label: "Ще коло", action: "another-round" },
+const PENDING_ACTIONS: Partial<Record<Flow["state"], { labelKey: MessageKey; action: FlowAction }>> = {
+  waiting_ready: { labelKey: "flowStrip.startReview", action: "advance" },
+  spawn_pending: { labelKey: "flowStrip.spawnReviewer", action: "advance" },
+  relay_pending: { labelKey: "flowStrip.relayNotes", action: "advance" },
+  needs_decision: { labelKey: "flowStrip.retryRound", action: "retry-round" },
+  done_comment: { labelKey: "flowStrip.anotherRound", action: "another-round" },
 };
 
 const BUSY_STATES: ReadonlySet<Flow["state"]> = new Set(["spawning", "reviewing", "relaying", "fixing"]);
@@ -34,6 +35,7 @@ function stateDot(flow: Flow): string {
  * the resulting state back.
  */
 export function FlowStrip({ flow, onFocusRound }: { flow: Flow; onFocusRound?: (n: number) => void }) {
+  const { t } = useLocale();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -58,14 +60,14 @@ export function FlowStrip({ flow, onFocusRound }: { flow: Flow; onFocusRound?: (
       }`}
     >
       <span className={`h-2 w-2 shrink-0 rounded-full ${stateDot(flow)}`} aria-hidden />
-      <span className="shrink-0 text-[10.5px] font-bold tracking-wide text-dim">ФЛОУ</span>
+      <span className="shrink-0 text-[10.5px] font-bold tracking-wide text-dim">{t("flowStrip.flow")}</span>
       <span className="shrink-0 text-[11px] font-semibold" title={flow.stateDetail ?? undefined}>
-        {STATE_LABELS[flow.state]}
+        {stateLabel(t, flow.state)}
         {flow.stateDetail ? <span className="text-dim"> · {flow.stateDetail}</span> : null}
       </span>
 
       {flow.rounds.length ? (
-        <span className="flex shrink-0 items-center gap-1" aria-label="Раунди ревью">
+        <span className="flex shrink-0 items-center gap-1" aria-label={t("flowStrip.roundsAria")}>
           {flow.rounds.map((round) => {
             const tone = verdictTone(round.verdict);
             const live = round.verdict === null && !round.error;
@@ -78,10 +80,11 @@ export function FlowStrip({ flow, onFocusRound }: { flow: Flow; onFocusRound?: (
                 style={{ backgroundColor: tone.soft, color: tone.color }}
                 title={
                   round.error
-                    ? `Раунд ${round.n}: ${round.error}`
+                    ? t("flowStrip.roundError", { n: round.n, error: round.error })
                     : round.verdict
-                      ? `Раунд ${round.n}: ${round.verdict}${round.findingsCount != null ? ` · ${round.findingsCount} знахідок` : ""}`
-                      : `Раунд ${round.n}: триває`
+                      ? t("flowStrip.roundVerdict", { n: round.n, verdict: round.verdict }) +
+                        (round.findingsCount != null ? ` · ${t("roundDeck.findings", { count: round.findingsCount })}` : "")
+                      : t("flowStrip.roundInProgress", { n: round.n })
                 }
                 onClick={() => onFocusRound?.(round.n)}
               >
@@ -100,17 +103,17 @@ export function FlowStrip({ flow, onFocusRound }: { flow: Flow; onFocusRound?: (
           disabled={busy}
           onClick={() => void run(pending.action)}
         >
-          {pending.label}
+          {t(pending.labelKey)}
         </button>
       ) : null}
       {flow.state === "needs_decision" ? (
         <button
           className="shrink-0 rounded-full border border-line bg-bg px-2 py-0.5 text-[10.5px] font-semibold text-ink hover:border-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-40"
           disabled={busy}
-          title="Додати ще раунди до ліміту"
+          title={t("flowStrip.addRoundsTitle")}
           onClick={() => void run("extend", { rounds: 2 })}
         >
-          +2 раунди
+          {t("flowStrip.plus2")}
         </button>
       ) : null}
 
@@ -121,17 +124,17 @@ export function FlowStrip({ flow, onFocusRound }: { flow: Flow; onFocusRound?: (
               flow.mode === "auto" ? "border-ok/40 bg-[#eef8f0] text-ok" : "border-line bg-bg text-dim hover:text-ink"
             }`}
             disabled={busy}
-            title={flow.mode === "auto" ? "Авто: переходи самі. Клік — вручну." : "Вручну: кожен перехід чекає кліку. Клік — авто."}
+            title={flow.mode === "auto" ? t("flowStrip.autoTitle") : t("flowStrip.manualTitle")}
             onClick={() => void run("set-mode", { mode: flow.mode === "auto" ? "manual" : "auto" })}
           >
-            {flow.mode === "auto" ? "авто" : "вручну"}
+            {flow.mode === "auto" ? t("flowDialog.auto") : t("flowStrip.manualShort")}
           </button>
           {flow.state === "paused" ? (
             <button
               className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-ok hover:bg-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-40"
               disabled={busy}
-              title="Продовжити флоу"
-              aria-label="Продовжити флоу"
+              title={t("flowStrip.resume")}
+              aria-label={t("flowStrip.resume")}
               onClick={() => void run("resume")}
             >
               <Play className="h-3.5 w-3.5" aria-hidden />
@@ -140,8 +143,8 @@ export function FlowStrip({ flow, onFocusRound }: { flow: Flow; onFocusRound?: (
             <button
               className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-dim hover:bg-bg hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-40"
               disabled={busy}
-              title="Пауза"
-              aria-label="Пауза"
+              title={t("flowStrip.pause")}
+              aria-label={t("flowStrip.pause")}
               onClick={() => void run("pause")}
             >
               <Pause className="h-3.5 w-3.5" aria-hidden />
@@ -154,8 +157,8 @@ export function FlowStrip({ flow, onFocusRound }: { flow: Flow; onFocusRound?: (
       <button
         className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-dim hover:bg-bg hover:text-err focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-40"
         disabled={busy}
-        title="Закрити флоу"
-        aria-label="Закрити флоу"
+        title={t("flowStrip.close")}
+        aria-label={t("flowStrip.close")}
         onClick={() => void run("close")}
       >
         <X className="h-3 w-3" aria-hidden />

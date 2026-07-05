@@ -13,6 +13,7 @@ import { FlowDialog } from "@/components/flows/FlowDialog";
 import { canStartFlow, flowByImplementer } from "@/components/flows/flowModel";
 import { FlowStrip } from "@/components/flows/FlowStrip";
 import { RoundDeck } from "@/components/flows/RoundDeck";
+import { canHandoff, HandoffHandle } from "@/components/HandoffHandle";
 import type { BranchGroup } from "@/components/projectModel";
 import { activityDot, cleanTitle, engineBadge, fmtAge } from "@/components/utils";
 
@@ -53,11 +54,18 @@ interface Props {
   drafts: string[];
   /** Path to glide the camera to and ring briefly (set by openers). */
   focus: string | null;
+  /** Path to ring without moving the camera, used by the mobile full-map overlay. */
+  ring?: string | null;
   onSelect: (file: FileEntry) => void;
+  /** Optional map-mode node pick handler; receives the selected node key. */
+  onNodePick?: (key: string) => void;
   onClose: (path: string) => void;
   onDraftClose: (id: string) => void;
   /** A draft's agent booted and its transcript arrived: open it as a real node. */
   onDraftSpawned: (id: string, file: FileEntry) => void;
+  /** The handoff handle under a pane: drop a draft that continues this
+      conversation. Absent in map mode — the handle stays hidden there. */
+  onHandoff?: (file: FileEntry) => void;
 }
 
 /** Round-chip click on a strip, delivered to that flow's deck. */
@@ -211,6 +219,7 @@ function NodeShell({
   onSelect,
   onClose,
   onFocusRound,
+  onHandoff,
 }: {
   node: SchemeNode;
   files: FileEntry[];
@@ -222,6 +231,7 @@ function NodeShell({
   onSelect: (file: FileEntry) => void;
   onClose: (path: string) => void;
   onFocusRound: (flowId: string, round: number) => void;
+  onHandoff?: (file: FileEntry) => void;
 }) {
   const [underOpen, setUnderOpen] = useState(false);
   const [flowOpen, setFlowOpen] = useState(false);
@@ -273,6 +283,9 @@ function NodeShell({
         />
       </div>
       <FarLabel file={node.file} />
+      {/* The handoff handle pinned outside the card's bottom-left corner —
+          where child arrows start; a click hangs a draft conversation below. */}
+      {onHandoff && canHandoff(node.file) ? <HandoffHandle file={node.file} onHandoff={() => onHandoff(node.file)} /> : null}
       {node.under.length ? (
         <button
           className="absolute -bottom-11 left-1/2 z-[2] inline-flex h-7 -translate-x-1/2 items-center gap-1.5 whitespace-nowrap rounded-full border border-line bg-panel px-2.5 text-[11px] font-semibold text-dim shadow-card hover:border-accent/40 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
@@ -369,6 +382,7 @@ const NodesLayer = memo(function NodesLayer({
   onFocusRound,
   onDraftClose,
   onDraftSpawned,
+  onHandoff,
 }: {
   layout: SchemeLayout;
   project: string;
@@ -383,6 +397,7 @@ const NodesLayer = memo(function NodesLayer({
   onFocusRound: (flowId: string, round: number) => void;
   onDraftClose: (id: string) => void;
   onDraftSpawned: (id: string, file: FileEntry) => void;
+  onHandoff?: (file: FileEntry) => void;
 }) {
   return (
     <div className={interactive ? undefined : "pointer-events-none select-none"}>
@@ -414,6 +429,7 @@ const NodesLayer = memo(function NodesLayer({
           onSelect={onSelect}
           onClose={onClose}
           onFocusRound={onFocusRound}
+          onHandoff={onHandoff}
         />
       ))}
     </div>
@@ -457,7 +473,22 @@ const dist = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.
  * minimap. The camera never re-renders panes: node/edge layers are memoized
  * and far-zoom labels scale through CSS vars.
  */
-export function SchemeBoard({ project, groups, manual, files, flows, drafts, focus, onSelect, onClose, onDraftClose, onDraftSpawned }: Props) {
+export function SchemeBoard({
+  project,
+  groups,
+  manual,
+  files,
+  flows,
+  drafts,
+  focus,
+  ring,
+  onSelect,
+  onNodePick,
+  onClose,
+  onDraftClose,
+  onDraftSpawned,
+  onHandoff,
+}: Props) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const [cam, setCam] = useState<Camera>({ x: 0, y: 0, z: 0.5 });
   const [mode, setModeState] = useState<Mode>("select");
@@ -507,23 +538,38 @@ export function SchemeBoard({ project, groups, manual, files, flows, drafts, foc
   const focusRound = useCallback((flowId: string, round: number) => {
     setDeckFocus((prev) => ({ flowId, round, nonce: (prev?.nonce ?? 0) + 1 }));
   }, []);
+  const visualFocus = ring ?? focus;
 
   /* Handlers passed into the memoized nodes layer must stay identity-stable,
      otherwise every camera frame re-renders every pane. */
   const selectRef = useRef(onSelect);
+  const nodePickRef = useRef(onNodePick);
   const closeRef = useRef(onClose);
   const draftCloseRef = useRef(onDraftClose);
   const draftSpawnedRef = useRef(onDraftSpawned);
+  const handoffRef = useRef(onHandoff);
   useEffect(() => {
     selectRef.current = onSelect;
+    nodePickRef.current = onNodePick;
     closeRef.current = onClose;
     draftCloseRef.current = onDraftClose;
     draftSpawnedRef.current = onDraftSpawned;
+    handoffRef.current = onHandoff;
   });
-  const stableSelect = useCallback((file: FileEntry) => selectRef.current(file), []);
+  const stableSelect = useCallback((file: FileEntry) => {
+    const nodePick = nodePickRef.current;
+    if (nodePick) {
+      nodePick(file.path);
+      return;
+    }
+    selectRef.current(file);
+  }, []);
   const stableClose = useCallback((path: string) => closeRef.current(path), []);
   const stableDraftClose = useCallback((id: string) => draftCloseRef.current(id), []);
   const stableDraftSpawned = useCallback((id: string, file: FileEntry) => draftSpawnedRef.current(id, file), []);
+  const stableHandoff = useCallback((file: FileEntry) => handoffRef.current?.(file), []);
+  /* The handle renders only when the opener wired a handler (not in map mode). */
+  const handoffForNodes = onHandoff ? stableHandoff : undefined;
 
   useEffect(() => {
     const el = viewportRef.current;
@@ -668,7 +714,7 @@ export function SchemeBoard({ project, groups, manual, files, flows, drafts, foc
     }
     const c = fitCam();
     if (c) {
-       
+
       setCam(c);
     }
   }, [project, layout, fitCam]);
@@ -929,7 +975,7 @@ export function SchemeBoard({ project, groups, manual, files, flows, drafts, foc
           files={files}
           interactive={!handLike}
           selected={selected}
-          focus={focus}
+          focus={visualFocus}
           flowsByImpl={flowsByImpl}
           deckFocus={deckFocus}
           onSelect={stableSelect}
@@ -937,6 +983,7 @@ export function SchemeBoard({ project, groups, manual, files, flows, drafts, foc
           onFocusRound={focusRound}
           onDraftClose={stableDraftClose}
           onDraftSpawned={stableDraftSpawned}
+          onHandoff={handoffForNodes}
         />
       </div>
 

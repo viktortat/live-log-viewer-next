@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-import { Trash2 } from "@/components/icons";
+import { Archive, Trash2 } from "@/components/icons";
 import type { FileEntry } from "@/lib/types";
 
 import { cleanTitle } from "@/lib/title";
@@ -78,6 +78,28 @@ function QuietFileRow({ file, onOpen }: { file: FileEntry; onOpen: (file: FileEn
 }
 
 /**
+ * Shelves a quiet project: hides it from the rail and the overview without
+ * touching disk. The default way to clear out a finished project — deletion
+ * stays available next to it for the rare case the transcripts must go.
+ * Reversible (rail archive section / new activity), so no confirmation.
+ */
+export function ArchiveProjectButton({ files, onArchive }: { files: FileEntry[]; onArchive: () => void }) {
+  if (!files.length || files.some((file) => file.proc === "running" || file.activity === "live")) return null;
+  return (
+    <button
+      type="button"
+      className="inline-flex shrink-0 items-center gap-1 rounded-full border border-line bg-bg px-2 py-0.5 text-[11px] font-semibold text-dim hover:border-accent/40 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+      onClick={() => {
+        onArchive();
+        gotoOverview();
+      }}
+    >
+      <Archive className="h-3 w-3" aria-hidden /> В архів
+    </button>
+  );
+}
+
+/**
  * Deletes every transcript of a quiet project from disk in one confirmed
  * action. Shown only while nothing in the project runs; the API additionally
  * refuses any entry whose process is still alive.
@@ -145,10 +167,12 @@ export function DeleteProjectButton({ files }: { files: FileEntry[] }) {
     <span className="inline-flex shrink-0 items-center gap-1.5">
       <button
         type="button"
-        className="inline-flex items-center gap-1 rounded-full border border-line bg-bg px-2 py-0.5 text-[11px] font-semibold text-dim hover:border-err/40 hover:text-err focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+        className="inline-flex items-center rounded-full border border-line bg-bg p-1 text-dim hover:border-err/40 hover:text-err focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+        aria-label="Видалити проєкт з диска"
+        title="Видалити проєкт з диска"
         onClick={() => setConfirming(true)}
       >
-        <Trash2 className="h-3 w-3" aria-hidden /> Видалити проєкт з диска
+        <Trash2 className="h-3 w-3" aria-hidden />
       </button>
       {error ? <span className="max-w-[180px] truncate text-[10.5px] font-semibold text-err">{error}</span> : null}
     </span>

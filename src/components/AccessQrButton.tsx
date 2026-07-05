@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Check, Copy, QrCode } from "lucide-react";
 
+import { useLocale } from "@/lib/i18n";
+
 interface AccessResponse {
   tailnetUrl: string | null;
 }
@@ -17,6 +19,7 @@ type LoadState = { status: "idle" } | { status: "ready"; url: string } | { statu
  * the token never touches an external image service or a server log.
  */
 export function AccessQrButton() {
+  const { t } = useLocale();
   const [open, setOpen] = useState(false);
   const [state, setState] = useState<LoadState>({ status: "idle" });
   // Keyed by url so a stale QR from a previous render never flashes for the
@@ -96,7 +99,7 @@ export function AccessQrButton() {
       <button
         type="button"
         aria-expanded={open}
-        aria-label="Показати QR для входу з телефона"
+        aria-label={t("qr.showAria")}
         onClick={() => {
           // Reset to "idle" on every open so the URL is refetched: a past
           // fetch failure or a rotated token stops being sticky until reload.
@@ -108,45 +111,48 @@ export function AccessQrButton() {
         <QrCode className="h-4 w-4" aria-hidden />
       </button>
       {open ? (
-        /* The rail is narrower than the popover on phones, so an absolute
-           right-0 panel would clip past the left viewport edge; below sm it
-           is fixed and centered instead. */
-        <div className="fixed left-1/2 top-12 z-50 flex w-[260px] -translate-x-1/2 flex-col gap-2.5 rounded-[12px] border border-line bg-panel p-3 shadow-[0_8px_28px_rgba(20,20,30,0.14)] sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-1.5 sm:translate-x-0">
+        /* The button sits near the right edge of the 248px-wide left rail, so
+           a right-aligned panel would run past the left viewport edge. On sm+
+           the panel opens rightward over the content area; below sm it is
+           fixed and centered. */
+        <div className="fixed left-1/2 top-12 z-50 flex w-[260px] -translate-x-1/2 flex-col gap-2.5 rounded-[12px] border border-line bg-panel p-3 shadow-[0_8px_28px_rgba(20,20,30,0.14)] sm:absolute sm:left-0 sm:right-auto sm:top-full sm:mt-1.5 sm:translate-x-0">
           {state.status === "idle" ? (
-            <span className="text-[11.5px] text-dim">завантаження…</span>
+            <span className="text-[12px] text-ink">{t("common.loading")}</span>
           ) : state.status === "error" ? (
-            <span className="text-[11.5px] font-semibold text-err">не вдалося отримати посилання</span>
+            <span className="text-[12px] font-semibold text-err">{t("qr.failed")}</span>
           ) : state.status === "unavailable" ? (
-            <span className="text-[11.5px] text-dim">
-              Запустіть viewer з доступом через Tailscale:{" "}
-              <code className="rounded bg-bg px-1 py-0.5 font-mono text-[11px]">bunx agent-log-viewer --tailscale</code>
+            <span className="text-[12px] leading-relaxed text-ink">
+              {t("qr.startHint")}
+              <code className="break-all rounded bg-chip px-1 py-0.5 font-mono text-[11px]">
+                bunx agent-log-viewer --tailscale
+              </code>
             </span>
           ) : (
             <>
               {qrSrc ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={qrSrc} alt="QR код для входу з телефона" className="mx-auto h-[220px] w-[220px]" />
+                <img src={qrSrc} alt={t("qr.alt")} className="mx-auto h-[220px] w-[220px]" />
               ) : (
-                <span className="text-[11.5px] text-dim">генерую QR…</span>
+                <span className="text-[12px] text-ink">{t("qr.generating")}</span>
               )}
               <div className="flex items-center gap-1.5">
                 <input
                   readOnly
                   value={state.url}
-                  aria-label="Посилання для входу з телефона"
+                  aria-label={t("qr.linkAria")}
                   onFocus={(event) => event.currentTarget.select()}
                   className="min-w-0 flex-1 truncate rounded-[8px] border border-line bg-bg px-2 py-1.5 font-mono text-[10.5px] text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
                 />
                 <button
                   type="button"
-                  aria-label="Копіювати посилання"
+                  aria-label={t("qr.copy")}
                   onClick={copy}
                   className="flex shrink-0 items-center gap-1 rounded-[8px] border border-line bg-panel px-2 py-1.5 text-[11px] font-semibold text-dim hover:border-accent/45 hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
                 >
                   {copied ? <Check className="h-3.5 w-3.5" aria-hidden /> : <Copy className="h-3.5 w-3.5" aria-hidden />}
                 </button>
               </div>
-              <span className="text-[10.5px] text-dim">скануй з телефона в тому ж tailnet</span>
+              <span className="text-[10.5px] text-dim">{t("qr.scanHint")}</span>
             </>
           )}
         </div>

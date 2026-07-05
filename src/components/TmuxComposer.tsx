@@ -5,6 +5,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ArrowRight, ArrowUpToLine, Loader2, Play, Square, SquareTerminal, X } from "@/components/icons";
 import { useDictation } from "@/hooks/useDictation";
 import { useTmuxTarget } from "@/hooks/useTmuxTarget";
+import { getLocale, useLocale } from "@/lib/i18n";
 import type { FileEntry } from "@/lib/types";
 
 import { ImagePickerButton, ImagePreviewStrip, useImageAttachments } from "./imageAttachments";
@@ -41,7 +42,8 @@ function canMessageWithoutPane(file: FileEntry): boolean {
 
 const draftKey = (path: string) => "llvDraft:" + path;
 
-const hhmm = (at: number) => new Date(at).toLocaleTimeString("uk", { hour12: false, hour: "2-digit", minute: "2-digit" });
+const hhmm = (at: number) =>
+  new Date(at).toLocaleTimeString(getLocale() === "uk" ? "uk-UA" : "en-US", { hour12: false, hour: "2-digit", minute: "2-digit" });
 
 /**
  * Chat-style composer pinned under the feed. A live pane gets the text typed
@@ -50,6 +52,7 @@ const hhmm = (at: number) => new Date(at).toLocaleTimeString("uk", { hour12: fal
  * Sent messages stay visible as a queue above the input until dismissed.
  */
 export function TmuxComposer({ file }: { file: FileEntry }) {
+  const { t } = useLocale();
   const target = useTmuxTarget(file.pid, canMessageWithoutPane(file) ? file.path : undefined);
   /* Column reshuffles can remount the composer mid-typing; the draft lives in
      sessionStorage so the text survives the remount. */
@@ -84,11 +87,18 @@ export function TmuxComposer({ file }: { file: FileEntry }) {
     inputRef.current?.focus();
   };
   /* onUnclaimedText catches the 120s auto-stop, whose transcript no stop()
-     promise waits for — it goes into the input for review, never auto-sent. */
+     promise waits for — it goes into the input for review, never auto-sent.
+     onLiveCommit lands realtime segments in the draft while still talking. */
   const dictation = useDictation({
     onError: (message) => setStatus({ kind: "err", text: message }),
     onUnclaimedText: insertSpoken,
+    onLiveCommit: insertSpoken,
   });
+
+  /* Realtime dictation overlays the in-flight transcript on the draft; the
+     draft state itself stays clean until stop() resolves and insertSpoken
+     appends the final text, so the two never double up. */
+  const displayText = dictation.liveText ? (text ? text.trimEnd() + " " : "") + dictation.liveText : text;
 
   /* The field grows with its content up to ~6 rows, then scrolls inside
      itself. Measured from scrollHeight on every text change, which also
@@ -98,7 +108,7 @@ export function TmuxComposer({ file }: { file: FileEntry }) {
     if (!el) return;
     el.style.height = "0px";
     el.style.height = Math.min(el.scrollHeight + 2, 160) + "px";
-  }, [text]);
+  }, [displayText]);
 
   /* eslint-disable-next-line react-hooks/set-state-in-effect */
   useEffect(() => setSent(readSent(file.path)), [file.path]);
@@ -152,13 +162,13 @@ export function TmuxComposer({ file }: { file: FileEntry }) {
       });
       const json = (await res.json()) as { ok?: boolean; error?: string; imagePaths?: string[]; target?: string; spawned?: boolean };
       if (!res.ok || !json.ok) {
-        setStatus({ kind: "err", text: json.error ?? "не вдалося надіслати" });
+        setStatus({ kind: "err", text: json.error ?? t("common.failedSend") });
         return;
       }
       const imgCount = attachments.images.length;
       const entry: SentEntry = {
         id: Date.now(),
-        text: payloadText.trim() || (imgCount ? `${imgCount} ${imgCount === 1 ? "картинка" : "картинки"}` : ""),
+        text: payloadText.trim() || (imgCount ? t("composer.imagesCount", { count: imgCount }) : ""),
         at: Date.now(),
         via: json.spawned ? "spawn" : "pane",
       };
@@ -168,14 +178,14 @@ export function TmuxComposer({ file }: { file: FileEntry }) {
       setStatus({
         kind: "ok",
         text: json.spawned
-          ? `запущено агента в tmux ${json.target ?? ""}`
+          ? t("composer.spawned", { target: json.target ?? "" })
           : json.imagePaths?.length
-            ? `надіслано ${json.imagePaths.length} шлях(и)`
-            : "надіслано",
+            ? t("composer.sentPaths", { count: json.imagePaths.length })
+            : t("common.sent"),
       });
       inputRef.current?.focus();
     } catch {
-      setStatus({ kind: "err", text: "сервер недоступний" });
+      setStatus({ kind: "err", text: t("common.serverUnavailable") });
     } finally {
       setSending(false);
     }
@@ -192,9 +202,10 @@ export function TmuxComposer({ file }: { file: FileEntry }) {
     try {
       const spoken = await dictation.stop();
       if (spoken === null) return;
-      /* Read through the ref: the draft may have changed since this closure's
-         render while the transcription round-trip was in flight. */
-      const combined = textRef.current ? textRef.current.trimEnd() + " " + spoken : spoken;
+      /* Read through the ref: live commits and typing may have grown the
+         draft while this closure's render was in flight. In realtime mode
+         `spoken` is just the uncommitted tail — often empty. */
+      const combined = spoken ? (textRef.current ? textRef.current.trimEnd() + " " + spoken : spoken) : textRef.current;
       setText(combined);
       await send(combined);
     } finally {
@@ -214,12 +225,12 @@ export function TmuxComposer({ file }: { file: FileEntry }) {
       });
       const json = (await res.json()) as { ok?: boolean; error?: string };
       if (!res.ok || !json.ok) {
-        setStatus({ kind: "err", text: json.error ?? "не вдалося перервати" });
+        setStatus({ kind: "err", text: json.error ?? t("composer.failedInterrupt") });
         return;
       }
-      setStatus({ kind: "ok", text: "надіслано Escape — агент перервано" });
+      setStatus({ kind: "ok", text: t("composer.escapeSent") });
     } catch {
-      setStatus({ kind: "err", text: "сервер недоступний" });
+      setStatus({ kind: "err", text: t("common.serverUnavailable") });
     } finally {
       setInterrupting(false);
     }
@@ -240,10 +251,10 @@ export function TmuxComposer({ file }: { file: FileEntry }) {
     <form
       onSubmit={handleSubmit}
       className="flex shrink-0 flex-col gap-1.5 border-t border-line bg-[#fbfbfd] px-2.5 py-2"
-      aria-label={spawnMode ? "Запустити агента з промптом у tmux" : `Надіслати повідомлення агенту в tmux ${target}`}
+      aria-label={spawnMode ? t("composer.spawnAria") : t("composer.sendAria", { target: target ?? "" })}
     >
       {sent.length ? (
-        <div className="flex flex-col gap-0.5" aria-label="Черга надісланих повідомлень">
+        <div className="flex flex-col gap-0.5" aria-label={t("composer.queueAria")}>
           {sent.map((entry) => (
             <div key={entry.id} className="flex items-center justify-end gap-1.5">
               <span
@@ -258,7 +269,7 @@ export function TmuxComposer({ file }: { file: FileEntry }) {
               </span>
               <button
                 type="button"
-                aria-label="Прибрати з черги"
+                aria-label={t("composer.removeFromQueue")}
                 className="inline-flex shrink-0 items-center rounded px-0.5 text-dim hover:text-err focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
                 onClick={() => persistSent(sent.filter((item) => item.id !== entry.id))}
               >
@@ -270,8 +281,9 @@ export function TmuxComposer({ file }: { file: FileEntry }) {
       ) : null}
       <textarea
         ref={inputRef}
-        value={text}
+        value={displayText}
         rows={1}
+        readOnly={Boolean(dictation.liveText)}
         onChange={(event) => setText(event.target.value)}
         onPaste={attachments.handlePaste}
         onKeyDown={(event) => {
@@ -285,8 +297,8 @@ export function TmuxComposer({ file }: { file: FileEntry }) {
             else void send();
           }
         }}
-        placeholder={relayMode ? "написати — передам через кореневу сесію…" : spawnMode ? "промпт — агент запуститься в tmux…" : "написати агенту…"}
-        aria-label="Текст для агента"
+        placeholder={relayMode ? t("composer.placeholderRelay") : spawnMode ? t("composer.placeholderSpawn") : t("composer.placeholderSend")}
+        aria-label={t("composer.textAria")}
         disabled={fieldsDisabled}
         className="w-full resize-none overflow-y-auto rounded-[10px] border border-line bg-panel px-2.5 py-1.5 text-[12.5px] leading-[18px] text-[#222] placeholder:text-dim focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-60"
       />
@@ -294,11 +306,11 @@ export function TmuxComposer({ file }: { file: FileEntry }) {
         <div className="flex min-w-0 items-center gap-1.5">
           <span
             className="inline-flex min-w-0 items-center gap-1 rounded-full bg-chip px-1.5 py-1 font-mono text-[9.5px] font-semibold text-[#555]"
-            title={relayMode ? "передасться через кореневу сесію гілки" : spawnMode ? "нове tmux-вікно з відновленим агентом" : `tmux ${target}`}
+            title={relayMode ? t("composer.titleRelay") : spawnMode ? t("composer.titleSpawnResumed") : `tmux ${target}`}
           >
             {relayMode ? (
               <>
-                <ArrowUpToLine className="h-3 w-3 shrink-0" aria-hidden /> корінь
+                <ArrowUpToLine className="h-3 w-3 shrink-0" aria-hidden /> {t("composer.root")}
               </>
             ) : spawnMode ? (
               <>
@@ -313,8 +325,8 @@ export function TmuxComposer({ file }: { file: FileEntry }) {
           {!spawnMode ? (
             <button
               type="button"
-              aria-label="Перервати агента (Escape)"
-              title="надіслати Escape у пейн агента"
+              aria-label={t("composer.interruptAria")}
+              title={t("composer.interruptTitle")}
               disabled={interrupting}
               onClick={() => void interrupt()}
               className="inline-flex shrink-0 items-center justify-center rounded-[8px] border border-line bg-panel p-2 text-dim hover:border-err/40 hover:text-err focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-50"
@@ -326,7 +338,7 @@ export function TmuxComposer({ file }: { file: FileEntry }) {
         <div className="flex shrink-0 items-center gap-1.5">
           <MicButtonView {...dictation} busy={voiceSending} onText={insertSpoken} />
           <ImagePickerButton
-            ariaLabel="Додати картинки"
+            ariaLabel={t("composer.addImages")}
             className="inline-flex shrink-0 items-center justify-center rounded-[8px] border border-line bg-panel p-2 text-dim hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
             onFiles={attachments.addFiles}
           />
@@ -334,8 +346,8 @@ export function TmuxComposer({ file }: { file: FileEntry }) {
             type={dictationRecording ? "button" : "submit"}
             onClick={dictationRecording ? () => void stopAndSend() : undefined}
             disabled={!canSend}
-            aria-label={dictationRecording ? "Зупинити запис і надіслати" : spawnMode ? "Запустити агента" : "Надіслати агенту"}
-            title={dictationRecording ? "зупинити запис і надіслати" : undefined}
+            aria-label={dictationRecording ? t("composer.stopAndSend") : spawnMode ? t("composer.launchAgent") : t("composer.sendToAgent")}
+            title={dictationRecording ? t("composer.stopAndSendTitle") : undefined}
             className={`inline-flex shrink-0 items-center justify-center rounded-[8px] border p-2 text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:opacity-40 ${
               dictationRecording ? "border-err bg-err hover:opacity-90" : "border-accent bg-accent hover:opacity-90"
             }`}

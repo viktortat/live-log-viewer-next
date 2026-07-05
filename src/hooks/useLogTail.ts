@@ -4,6 +4,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { getLocale, translate } from "@/lib/i18n";
 import type { FileEntry } from "@/lib/types";
 import type { LogChunk } from "@/lib/types";
 
@@ -137,7 +138,7 @@ export function useLogTail(file: FileEntry | null, pausedInput = false, cap = 25
         setLoading(false);
       } catch {
         if (alive && gen === genRef.current) {
-          setError("сервер недоступний");
+          setError(translate(getLocale(), "common.serverUnavailable"));
           setLoading(false);
         }
       }

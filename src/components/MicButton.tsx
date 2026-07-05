@@ -2,6 +2,7 @@
 
 import { Loader2, Mic, X } from "@/components/icons";
 import { fmtElapsed, METER_HEIGHT, METER_WIDTH, type UseDictationResult } from "@/hooks/useDictation";
+import { useLocale } from "@/lib/i18n";
 
 export interface MicButtonViewProps extends UseDictationResult {
   onText: (text: string) => void;
@@ -16,6 +17,7 @@ export interface MicButtonViewProps extends UseDictationResult {
  * around the same recording (see TmuxComposer) shares one hook instance.
  */
 export function MicButtonView({ phase, elapsed, canvasRef, start, stop, discard, onText, busy = false }: MicButtonViewProps) {
+  const { t } = useLocale();
   const handleMain = () => {
     if (busy) return;
     if (phase === "idle") void start();
@@ -31,7 +33,7 @@ export function MicButtonView({ phase, elapsed, canvasRef, start, stop, discard,
       <span className="flex shrink-0 items-center gap-1">
         <button
           type="button"
-          aria-label="Зупинити запис і розпізнати"
+          aria-label={t("mic.stopRecognize")}
           onClick={handleMain}
           className="flex items-center gap-1.5 rounded-[8px] border border-err/50 bg-[#fff2f2] px-2 py-2 text-[11px] font-bold text-err focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-err/40"
         >
@@ -40,7 +42,7 @@ export function MicButtonView({ phase, elapsed, canvasRef, start, stop, discard,
         </button>
         <button
           type="button"
-          aria-label="Скасувати запис"
+          aria-label={t("mic.cancel")}
           onClick={discard}
           className="inline-flex items-center justify-center rounded-[8px] border border-line bg-panel p-2 text-dim hover:text-err focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
         >
@@ -53,8 +55,8 @@ export function MicButtonView({ phase, elapsed, canvasRef, start, stop, discard,
   return (
     <button
       type="button"
-      aria-label={phase === "busy" ? "Розпізнаю…" : "Надиктувати"}
-      title={phase === "busy" ? "розпізнаю…" : "надиктувати (до 2 хв)"}
+      aria-label={phase === "busy" ? t("mic.recognizing") : t("mic.dictate")}
+      title={phase === "busy" ? t("mic.recognizing") : t("mic.dictateHint")}
       disabled={phase === "busy" || busy}
       onClick={handleMain}
       className="inline-flex shrink-0 items-center justify-center rounded-[8px] border border-line bg-panel p-2 text-dim hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-60"

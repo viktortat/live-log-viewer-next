@@ -2,11 +2,19 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import { useLocale } from "@/lib/i18n";
+
 export type DictationPhase = "idle" | "rec" | "busy";
 
 const MAX_SECONDS = 120;
 /* Sub-2KB blobs are a misclick, not speech — dropped without a server call. */
 const MIN_BLOB_BYTES = 2_000;
+
+/* Realtime Scribe wants raw 16kHz PCM; VAD commits a segment after this much
+   silence, which is what turns speech into committed text mid-recording. */
+const LIVE_SAMPLE_RATE = 16_000;
+const LIVE_VAD_SILENCE_SECS = "1.2";
+const LIVE_WS_URL = "wss://api.elevenlabs.io/v1/speech-to-text/realtime";
 
 export const METER_BARS = 13;
 export const METER_WIDTH = 56;
@@ -44,41 +52,81 @@ export function drawMeter(canvas: HTMLCanvasElement, bins: Uint8Array): void {
   }
 }
 
+function float32ToBase64Pcm16(float32: Float32Array): string {
+  const int16 = new Int16Array(float32.length);
+  for (let i = 0; i < float32.length; i += 1) {
+    const s = Math.max(-1, Math.min(1, float32[i] ?? 0));
+    int16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+  }
+  const bytes = new Uint8Array(int16.buffer);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i] ?? 0);
+  return btoa(binary);
+}
+
+interface LiveSession {
+  ws: WebSocket;
+  ctx: AudioContext;
+  processor: ScriptProcessorNode;
+  stream: MediaStream;
+  /* Audio captured before the socket opens; flushed on open so the first
+     words of an eager speaker are not lost to the connection handshake. */
+  preOpenQueue: string[];
+  partial: string;
+}
+
 export interface UseDictationOptions {
   onError: (message: string) => void;
   /** Receives a transcript no stop() call was waiting for. The 120s auto-stop
-      fires rec.stop() with no pending resolver; without this handler that
-      recording's text would be silently dropped. */
+      fires with no pending resolver; without this handler that recording's
+      text would be silently dropped. */
   onUnclaimedText: (text: string) => void;
+  /** Realtime mode delivers each VAD-committed segment here the moment it
+      arrives, mid-recording — the composer appends it to the draft right
+      away, so stop() only ever returns the short uncommitted tail. */
+  onLiveCommit: (segment: string) => void;
 }
 
 export interface UseDictationResult {
   phase: DictationPhase;
   elapsed: number;
+  /** The in-flight partial of the current segment while a realtime session
+      records; committed segments have already left through onLiveCommit.
+      Empty in batch mode. Composers overlay it on the draft so speech shows
+      up in the input as it is spoken. */
+  liveText: string;
   canvasRef: React.RefObject<HTMLCanvasElement | null>;
   start: () => Promise<void>;
   /**
-   * Stops recording and transcribes it through /api/transcribe, resolving with
-   * the recognised text. Resolves null when there is nothing usable — a
-   * discard, a misclick-length blob, or a reported error (already surfaced via
-   * onError) — so a caller only ever acts on a non-null result.
+   * Stops recording and resolves with the recognised text. In realtime mode
+   * this is instant: committed segments already went out via onLiveCommit, so
+   * it resolves the uncommitted partial tail (possibly "") without waiting
+   * for the server. Resolves null when there is nothing usable — a discard, a
+   * misclick-length blob, or a reported error (already surfaced via onError).
    */
   stop: () => Promise<string | null>;
   discard: () => void;
 }
 
 /**
- * Recording + transcription state machine shared by every dictation control:
- * getUserMedia + MediaRecorder (webm/opus), a live input-level meter, and a
- * stop that resolves once /api/transcribe answers. Lifted out of MicButton so
- * a composer can orchestrate its own send button around the same recording
- * (see TmuxComposer's stop-and-send).
+ * Recording + transcription state machine shared by every dictation control.
+ * Two paths behind one interface:
+ *  - realtime: raw PCM streams to ElevenLabs Scribe over WebSocket and the
+ *    transcript arrives live via `liveText` (picked when /api/transcribe/token
+ *    hands out a session token, i.e. the elevenlabs backend is selected);
+ *  - batch: MediaRecorder (webm/opus) posted to /api/transcribe on stop —
+ *    the fallback whenever no token is available.
+ * Lifted out of MicButton so a composer can orchestrate its own send button
+ * around the same recording (see TmuxComposer's stop-and-send).
  */
-export function useDictation({ onError, onUnclaimedText }: UseDictationOptions): UseDictationResult {
+export function useDictation({ onError, onUnclaimedText, onLiveCommit }: UseDictationOptions): UseDictationResult {
+  const { t } = useLocale();
   const [phase, setPhase] = useState<DictationPhase>("idle");
   const [elapsed, setElapsed] = useState(0);
+  const [liveText, setLiveText] = useState("");
   const recRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  const liveRef = useRef<LiveSession | null>(null);
   const discardRef = useRef(false);
   const timerRef = useRef<number | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -126,18 +174,57 @@ export function useDictation({ onError, onUnclaimedText }: UseDictationOptions):
     meterRef.current = { ctx, raf: requestAnimationFrame(draw) };
   };
 
+  const teardownLive = () => {
+    const live = liveRef.current;
+    liveRef.current = null;
+    if (!live) return;
+    try {
+      live.processor.disconnect();
+    } catch {
+      /* already disconnected */
+    }
+    try {
+      live.ws.close();
+    } catch {
+      /* already closed */
+    }
+    live.stream.getTracks().forEach((track) => track.stop());
+    void live.ctx.close().catch(() => undefined);
+  };
+
+  /* Ends a live session and hands the uncommitted tail to whoever waits for
+     it: the pending stop() resolver, or onUnclaimedText for the auto-stop.
+     Committed segments are already in the draft via onLiveCommit. */
+  const finishLive = (live: LiveSession) => {
+    stopTimer();
+    stopMeter();
+    teardownLive();
+    setLiveText("");
+    setPhase("idle");
+    const resolvePending = pendingRef.current;
+    pendingRef.current = null;
+    if (discardRef.current) {
+      resolvePending?.(null);
+      return;
+    }
+    const tail = live.partial.trim();
+    if (resolvePending) resolvePending(tail);
+    else if (tail) onUnclaimedText(tail);
+  };
+
   useEffect(() => {
     return () => {
       stopTimer();
       stopMeter();
       discardRef.current = true;
+      teardownLive();
       const rec = recRef.current;
       if (rec && rec.state !== "inactive") rec.stop();
       rec?.stream.getTracks().forEach((track) => track.stop());
     };
   }, []);
 
-  const finish = async () => {
+  const finishBatch = async () => {
     stopTimer();
     stopMeter();
     const rec = recRef.current;
@@ -159,7 +246,7 @@ export function useDictation({ onError, onUnclaimedText }: UseDictationOptions):
       const res = await fetch("/api/transcribe", { method: "POST", body: form });
       const json = (await res.json()) as { text?: string; error?: string };
       if (!res.ok || typeof json.text !== "string") {
-        onError(json.error ?? "не вдалося розпізнати");
+        onError(json.error ?? t("dictation.failed"));
         resolvePending?.(null);
         return;
       }
@@ -168,50 +255,153 @@ export function useDictation({ onError, onUnclaimedText }: UseDictationOptions):
         if (resolvePending) resolvePending(text);
         else onUnclaimedText(text);
       } else {
-        onError("тиша — нічого не розпізналось");
+        onError(t("dictation.silence"));
         resolvePending?.(null);
       }
     } catch {
-      onError("сервер недоступний");
+      onError(t("common.serverUnavailable"));
       resolvePending?.(null);
     } finally {
       setPhase("idle");
     }
   };
 
+  /* A non-200 from the token route means live mode is off (other backend, no
+     key) — the caller falls back to batch without surfacing anything. */
+  const fetchLiveToken = async (): Promise<string | null> => {
+    try {
+      const res = await fetch("/api/transcribe/token", { method: "POST" });
+      if (!res.ok) return null;
+      const json = (await res.json()) as { token?: string };
+      return typeof json.token === "string" && json.token ? json.token : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const startLive = (stream: MediaStream, token: string): boolean => {
+    let ctx: AudioContext;
+    try {
+      ctx = new AudioContext({ sampleRate: LIVE_SAMPLE_RATE });
+    } catch {
+      return false;
+    }
+    const params = new URLSearchParams({
+      model_id: "scribe_v2_realtime",
+      token,
+      audio_format: `pcm_${LIVE_SAMPLE_RATE}`,
+      commit_strategy: "vad",
+      vad_silence_threshold_secs: LIVE_VAD_SILENCE_SECS,
+    });
+    const ws = new WebSocket(`${LIVE_WS_URL}?${params.toString()}`);
+    const processor = ctx.createScriptProcessor(4096, 1, 1);
+    const live: LiveSession = { ws, ctx, processor, stream, preOpenQueue: [], partial: "" };
+    liveRef.current = live;
+
+    const source = ctx.createMediaStreamSource(stream);
+    processor.onaudioprocess = (event) => {
+      if (liveRef.current !== live) return;
+      const chunk = float32ToBase64Pcm16(event.inputBuffer.getChannelData(0));
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ message_type: "input_audio_chunk", audio_base_64: chunk }));
+      } else if (ws.readyState === WebSocket.CONNECTING) {
+        live.preOpenQueue.push(chunk);
+      }
+    };
+    source.connect(processor);
+    processor.connect(ctx.destination);
+
+    ws.addEventListener("open", () => {
+      if (liveRef.current !== live) return;
+      for (const chunk of live.preOpenQueue) {
+        ws.send(JSON.stringify({ message_type: "input_audio_chunk", audio_base_64: chunk }));
+      }
+      live.preOpenQueue = [];
+    });
+
+    ws.addEventListener("message", (event) => {
+      if (liveRef.current !== live) return;
+      try {
+        const msg = JSON.parse(event.data as string) as { message_type: string; text?: string; error?: string };
+        if (msg.message_type === "partial_transcript") {
+          live.partial = msg.text ?? "";
+        } else if (
+          (msg.message_type === "committed_transcript" || msg.message_type === "committed_transcript_with_timestamps") &&
+          msg.text
+        ) {
+          /* Straight into the draft, mid-recording. */
+          live.partial = "";
+          onLiveCommit(msg.text);
+        } else if (
+          msg.message_type === "auth_error" ||
+          msg.message_type === "error" ||
+          msg.message_type === "invalid_request" ||
+          msg.message_type === "quota_exceeded"
+        ) {
+          onError(msg.error || t("dictation.liveError"));
+          discardRef.current = true;
+          finishLive(live);
+          return;
+        }
+        setLiveText(live.partial);
+      } catch {
+        /* non-JSON frame — ignore */
+      }
+    });
+
+    ws.addEventListener("close", () => {
+      /* Unexpected drop mid-recording: keep what was already transcribed. */
+      if (liveRef.current === live && !pendingRef.current) {
+        onError(t("dictation.connectionLost"));
+        finishLive(live);
+      }
+    });
+
+    return true;
+  };
+
   const start = async () => {
     /* getUserMedia can hang on a permission prompt; a second tap during that
        wait would spin up a second recorder over the first and leak its stream. */
-    if (startingRef.current || recRef.current) return;
+    if (startingRef.current || recRef.current || liveRef.current) return;
     startingRef.current = true;
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 } });
     } catch {
-      onError("немає доступу до мікрофона");
-      return;
-    } finally {
+      onError(t("dictation.noMic"));
       startingRef.current = false;
+      return;
     }
-    const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm";
-    const rec = new MediaRecorder(stream, { mimeType });
-    chunksRef.current = [];
     discardRef.current = false;
-    rec.ondataavailable = (event) => {
-      if (event.data.size) chunksRef.current.push(event.data);
-    };
-    rec.onstop = () => {
-      void finish();
-    };
-    rec.start(250);
-    recRef.current = rec;
+    setLiveText("");
+
+    const token = await fetchLiveToken();
+    const liveStarted = token !== null && startLive(stream, token);
+    if (!liveStarted) {
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm";
+      const rec = new MediaRecorder(stream, { mimeType });
+      chunksRef.current = [];
+      rec.ondataavailable = (event) => {
+        if (event.data.size) chunksRef.current.push(event.data);
+      };
+      rec.onstop = () => {
+        void finishBatch();
+      };
+      rec.start(250);
+      recRef.current = rec;
+    }
+    startingRef.current = false;
     startMeter(stream);
     setElapsed(0);
     setPhase("rec");
     timerRef.current = window.setInterval(() => {
       setElapsed((seconds) => {
         const next = seconds + 1;
-        if (next >= MAX_SECONDS && recRef.current?.state === "recording") recRef.current.stop();
+        if (next >= MAX_SECONDS) {
+          if (recRef.current?.state === "recording") recRef.current.stop();
+          else if (liveRef.current) finishLive(liveRef.current);
+        }
         return next;
       });
     }, 1_000);
@@ -219,6 +409,14 @@ export function useDictation({ onError, onUnclaimedText }: UseDictationOptions):
 
   const stop = (): Promise<string | null> => {
     return new Promise((resolve) => {
+      const live = liveRef.current;
+      if (live) {
+        /* Instant: the current partial IS the tail — no waiting for the
+           server to confirm it. finishLive resolves synchronously. */
+        pendingRef.current = resolve;
+        finishLive(live);
+        return;
+      }
       const rec = recRef.current;
       if (!rec || rec.state !== "recording") {
         resolve(null);
@@ -232,7 +430,8 @@ export function useDictation({ onError, onUnclaimedText }: UseDictationOptions):
   const discard = () => {
     discardRef.current = true;
     if (recRef.current?.state === "recording") recRef.current.stop();
+    else if (liveRef.current) finishLive(liveRef.current);
   };
 
-  return { phase, elapsed, canvasRef, start, stop, discard };
+  return { phase, elapsed, liveText, canvasRef, start, stop, discard };
 }

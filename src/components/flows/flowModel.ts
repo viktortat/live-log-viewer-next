@@ -1,3 +1,4 @@
+import { getLocale, type TFunction, translate } from "@/lib/i18n";
 import type { Flow, FlowAction, FlowState, ReviewVerdict } from "@/lib/flows/types";
 import type { FileEntry } from "@/lib/types";
 
@@ -41,20 +42,10 @@ export function canStartFlow(file: FileEntry, activeByImplementer: ReadonlyMap<s
   return isConversation(file);
 }
 
-export const STATE_LABELS: Record<FlowState, string> = {
-  waiting_ready: "чекає READY",
-  spawn_pending: "готовий спавнити ревʼюера",
-  spawning: "запускаю ревʼюера",
-  reviewing: "ревью",
-  relay_pending: "вердикт є — передати?",
-  relaying: "передаю зауваження",
-  fixing: "фікси",
-  approved: "затверджено",
-  done_comment: "готово із зауваженнями",
-  needs_decision: "потребує рішення",
-  paused: "пауза",
-  closed: "закрито",
-};
+/** Localized lifecycle-state label; keys live under flowState.* in the dicts. */
+export function stateLabel(t: TFunction, state: FlowState): string {
+  return t(`flowState.${state}`);
+}
 
 /** States that ask for the user's attention on the strip and the switchboard. */
 export const ATTENTION_STATES: ReadonlySet<FlowState> = new Set([
@@ -91,8 +82,8 @@ export async function patchFlow(
     });
     if (res.ok) return null;
     const json = (await res.json().catch(() => null)) as { error?: string } | null;
-    return json?.error ?? `не вдалося (${res.status})`;
+    return json?.error ?? translate(getLocale(), "flowModel.failed", { status: res.status });
   } catch {
-    return "сервер недоступний";
+    return translate(getLocale(), "common.serverUnavailable");
   }
 }

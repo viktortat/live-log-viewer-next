@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 
 import type { Flow, Round } from "@/lib/flows/types";
+import { type TFunction, useLocale } from "@/lib/i18n";
 import type { FileEntry } from "@/lib/types";
 
 import { BranchPane } from "@/components/BranchPane";
@@ -20,10 +21,10 @@ export interface DeckRound {
   file: FileEntry | null;
 }
 
-function roundLabel(round: Round): string {
-  if (round.error) return `Раунд ${round.n} · перервано`;
-  if (round.verdict) return `Раунд ${round.n} · ${VERDICT_GLYPHS[round.verdict]} ${round.verdict}`;
-  return `Раунд ${round.n} · триває`;
+function roundLabel(t: TFunction, round: Round): string {
+  if (round.error) return t("roundDeck.roundAborted", { n: round.n });
+  if (round.verdict) return t("roundDeck.roundVerdict", { n: round.n, verdict: `${VERDICT_GLYPHS[round.verdict]} ${round.verdict}` });
+  return t("roundDeck.roundInProgress", { n: round.n });
 }
 
 /** Spine of a stacked (non-front) round: pull it to bring the round forward. */
@@ -38,6 +39,7 @@ function RoundTab({
   pulse: boolean;
   onPull: () => void;
 }) {
+  const { t } = useLocale();
   const tone = verdictTone(round.verdict);
   return (
     <button
@@ -50,7 +52,7 @@ function RoundTab({
         zIndex: 10 - depth,
         transform: `scale(${1 - depth * 0.035}) translateZ(${-depth * 34}px)`,
       }}
-      title={round.error ? `${roundLabel(round)}: ${round.error}` : roundLabel(round)}
+      title={round.error ? `${roundLabel(t, round)}: ${round.error}` : roundLabel(t, round)}
       onClick={onPull}
     >
       <span
@@ -60,8 +62,8 @@ function RoundTab({
         R{round.n} {round.verdict ? VERDICT_GLYPHS[round.verdict] : round.error ? "!" : "⏳"}
       </span>
       <span className="min-w-0 flex-1 truncate text-[10.5px] font-semibold text-dim">
-        {round.error ? "перервано" : round.verdict ? round.verdict : "ревью триває"}
-        {round.findingsCount != null && round.findingsCount > 0 ? ` · ${round.findingsCount} знахідок` : ""}
+        {round.error ? t("roundDeck.aborted") : round.verdict ? round.verdict : t("roundDeck.reviewInProgress")}
+        {round.findingsCount != null && round.findingsCount > 0 ? ` · ${t("roundDeck.findings", { count: round.findingsCount })}` : ""}
       </span>
       {pulse ? <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-ok" aria-hidden /> : null}
     </button>
@@ -88,6 +90,7 @@ export function RoundDeck({
   /** Round chip clicked on the strip; nonce-encoded as `n + fraction` changes. */
   focusRound: number | null;
 }) {
+  const { t } = useLocale();
   const latest = rounds.length ? rounds[rounds.length - 1]! : null;
   /* Ephemeral by design: on reload the live round is in front again. */
   const [frontN, setFrontN] = useState<number | null>(null);
@@ -112,7 +115,7 @@ export function RoundDeck({
   if (!front) {
     return (
       <div className="flex h-full items-center justify-center rounded-[10px] border border-dashed border-[#c9c9d1] bg-panel/60">
-        <span className="text-[12px] font-semibold text-dim">чекаю на перший раунд ревью…</span>
+        <span className="text-[12px] font-semibold text-dim">{t("roundDeck.waitingFirst")}</span>
       </div>
     );
   }
@@ -145,9 +148,9 @@ export function RoundDeck({
                 className="flex h-6 shrink-0 items-center gap-1.5 border-b border-line px-2.5 text-[10.5px] font-bold"
                 style={{ backgroundColor: tone.soft, color: tone.color }}
               >
-                {roundLabel(front.round)}
+                {roundLabel(t, front.round)}
                 {front.round.findingsCount != null && front.round.findingsCount > 0 ? (
-                  <span className="font-semibold opacity-80">· {front.round.findingsCount} знахідок</span>
+                  <span className="font-semibold opacity-80">· {t("roundDeck.findings", { count: front.round.findingsCount })}</span>
                 ) : null}
                 {front.round.readyNote ? (
                   <span className="min-w-0 flex-1 truncate font-semibold opacity-70" title={front.round.readyNote}>
@@ -159,9 +162,9 @@ export function RoundDeck({
           />
         ) : (
           <div className="flex h-full flex-col items-center justify-center gap-1 rounded-[10px] border border-line bg-panel shadow-card">
-            <span className="text-[12px] font-semibold text-dim">{roundLabel(front.round)}</span>
+            <span className="text-[12px] font-semibold text-dim">{roundLabel(t, front.round)}</span>
             <span className="text-[11px] text-dim">
-              {front.round.error ? front.round.error : "запускаю ревʼюера — транскрипт зʼявиться за мить…"}
+              {front.round.error ? front.round.error : t("roundDeck.spawningReviewer")}
             </span>
           </div>
         )}
@@ -182,7 +185,7 @@ export function RoundDeck({
           style={{ height: TAB_H, bottom: -(shown.length * TAB_STEP) - 8, zIndex: 10 - shown.length }}
           aria-hidden
         >
-          ще {hidden} раунд(и) — клікни чипи на стрічці флоу
+          {t("roundDeck.moreRounds", { count: hidden })}
         </div>
       ) : null}
     </div>

@@ -3,6 +3,7 @@
 import { Check, Loader2, Pause, Send, X } from "lucide-react";
 import { useMemo, useState } from "react";
 
+import { type TFunction, useLocale } from "@/lib/i18n";
 import type { FileEntry, PendingQuestionItem } from "@/lib/types";
 
 type CardState = "pending" | "delivering" | "answered" | "superseded" | "failed";
@@ -11,14 +12,15 @@ function labelFor(question: PendingQuestionItem, value: number): string {
   return question.options[value]?.label ?? String(value + 1);
 }
 
-function elapsed(since: number): string {
+function elapsed(t: TFunction, since: number): string {
   const seconds = Math.max(0, Math.floor(Date.now() / 1000 - since));
-  if (seconds < 60) return `${seconds} с`;
+  if (seconds < 60) return t("question.sec", { n: seconds });
   const minutes = Math.floor(seconds / 60);
-  return minutes < 60 ? `${minutes} хв` : `${Math.floor(minutes / 60)} год`;
+  return minutes < 60 ? t("question.min", { n: minutes }) : t("question.hour", { n: Math.floor(minutes / 60) });
 }
 
 export function QuestionCard({ file }: { file: FileEntry }) {
+  const { t } = useLocale();
   const pending = file.pendingQuestion;
   const [state, setState] = useState<CardState>("pending");
   const [message, setMessage] = useState("");
@@ -38,16 +40,101 @@ export function QuestionCard({ file }: { file: FileEntry }) {
 
   if (!pending) {
     if (!file.waitingInput) return null;
+    const menu = file.waitingInput.menu;
+    const busy = state === "delivering";
+    const sendDialogKey = async (key: string, label: string) => {
+      setState("delivering");
+      setMessage("");
+      try {
+        const res = await fetch("/api/tmux", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ action: "dialog-key", path: file.path, key, ...(/^[1-9]$/.test(key) ? { label } : {}) }),
+        });
+        const json = (await res.json()) as { ok?: boolean; error?: string };
+        if (!res.ok || !json.ok) {
+          setState("failed");
+          setMessage(json.error ?? t("common.failedSend"));
+          return;
+        }
+        setState("answered");
+        setMessage(label);
+      } catch {
+        setState("failed");
+        setMessage(t("common.serverUnavailable"));
+      }
+    };
+    if (state === "answered") {
+      return (
+        <div id="question" className="my-4 rounded-[8px] border border-ok/25 bg-[#eefaf1] px-4 py-3 text-[13px] font-semibold text-ok">
+          {t("question.sentToPane", { text: message })}
+        </div>
+      );
+    }
     return (
       <div id="question" className="my-4 rounded-[8px] border border-[#e0ae45]/45 bg-[#fff9ed] p-4 shadow-card">
         <div className="mb-2 inline-flex items-center gap-1.5 rounded-full bg-[#f5dfae] px-2 py-0.5 text-[11px] font-bold text-[#8a5a00]">
-          <Pause className="h-3.5 w-3.5" aria-hidden /> чекає на відповідь
+          <Pause className="h-3.5 w-3.5" aria-hidden /> {t("question.waiting")}
         </div>
-        <div className="text-[13px] font-semibold text-ink">Пейн {file.waitingInput.target} · {elapsed(file.waitingInput.since)}</div>
-        <pre className="mt-2 whitespace-pre-wrap break-words rounded-[8px] border border-line bg-bg px-3 py-2 text-[12px] text-dim">
-          {file.waitingInput.screenTail}
-        </pre>
-        <div className="mt-3 text-[12px] text-dim">Можна відповісти через композер нижче.</div>
+        <div className="text-[13px] font-semibold text-ink">{t("question.pane", { target: file.waitingInput.target })} · {elapsed(t, file.waitingInput.since)}</div>
+        {menu ? (
+          <>
+            {menu.tabs.length ? (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {menu.tabs.map((tab, index) => (
+                  <span key={index} className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${tab.done ? "bg-ok/15 text-ok" : "bg-bg text-dim"}`}>
+                    {tab.done ? "✓ " : ""}
+                    {tab.label}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            <div className="mt-2 text-[14px] font-bold text-ink">{menu.question}</div>
+            <div className="mt-2 space-y-1.5">
+              {menu.options.map((option) => (
+                <button
+                  key={option.value}
+                  className={`flex w-full items-start gap-2 rounded-[8px] border px-3 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35 disabled:opacity-60 ${
+                    option.recommended ? "border-[#e0ae45]/45 bg-[#fff5dc]" : "border-line bg-bg"
+                  }`}
+                  disabled={busy || option.value > 9}
+                  onClick={() => void sendDialogKey(String(option.value), option.label)}
+                >
+                  <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border border-line bg-panel text-[10px] font-bold">
+                    {option.value}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block text-[13px] font-bold">{option.label}</span>
+                    {option.description ? <span className="block text-[12px] text-dim">{option.description}</span> : null}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </>
+        ) : (
+          <pre className="mt-2 max-h-[240px] overflow-auto whitespace-pre-wrap break-words rounded-[8px] border border-line bg-bg px-3 py-2 text-[12px] text-dim">
+            {file.waitingInput.screenTail}
+          </pre>
+        )}
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {(["Tab", "Enter", "Escape"] as const).map((key) => (
+            <button
+              key={key}
+              className="rounded-[8px] border border-line bg-bg px-2.5 py-1 text-[12px] font-semibold text-dim disabled:opacity-60"
+              disabled={busy}
+              onClick={() => void sendDialogKey(key, key === "Escape" ? "Esc" : key)}
+            >
+              {key === "Escape" ? "Esc" : key}
+            </button>
+          ))}
+          <span className="text-[12px] text-dim">{t("question.keysHint")}</span>
+        </div>
+        {state === "delivering" ? (
+          <div className="mt-2 inline-flex items-center gap-1.5 text-[12px] font-semibold text-dim">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> {t("common.sending")}
+          </div>
+        ) : null}
+        {state === "failed" ? <div className="mt-2 text-[12px] font-semibold text-err">{message}</div> : null}
       </div>
     );
   }
@@ -65,18 +152,18 @@ export function QuestionCard({ file }: { file: FileEntry }) {
       if (!res.ok || !json.ok) {
         if (res.status === 409 && (json.superseded || json.answer)) {
           setState("superseded");
-          setMessage(json.answer ?? json.error ?? "відповідь уже записана");
+          setMessage(json.answer ?? json.error ?? t("question.alreadyAnswered"));
           return;
         }
         setState("failed");
-        setMessage(json.error ?? "не вдалося надіслати");
+        setMessage(json.error ?? t("common.failedSend"));
         return;
       }
       setState("answered");
       setMessage(json.answer ?? optimistic);
     } catch {
       setState("failed");
-      setMessage("сервер недоступний");
+      setMessage(t("common.serverUnavailable"));
     }
   };
 
@@ -104,12 +191,12 @@ export function QuestionCard({ file }: { file: FileEntry }) {
       });
       const json = (await res.json()) as { ok?: boolean; error?: string; target?: string };
       if (!res.ok || !json.ok) {
-        setMessage(json.error ?? "не вдалося відкрити сесію");
+        setMessage(json.error ?? t("question.openFailed"));
         return;
       }
-      setMessage(`відкрито ${json.target ?? "tmux"}`);
+      setMessage(t("question.opened", { target: json.target ?? "tmux" }));
     } catch {
-      setMessage("сервер недоступний");
+      setMessage(t("common.serverUnavailable"));
     } finally {
       setResuming(false);
     }
@@ -119,14 +206,14 @@ export function QuestionCard({ file }: { file: FileEntry }) {
   if (state === "answered") {
     return (
       <div id="question" className="my-4 rounded-[8px] border border-ok/25 bg-[#eefaf1] px-4 py-3 text-[13px] font-semibold text-ok">
-        Відповідено: {message || selectedLabel}
+        {t("question.answered", { text: message || selectedLabel })}
       </div>
     );
   }
   if (state === "superseded") {
     return (
       <div id="question" className="my-4 rounded-[8px] border border-line bg-chip px-4 py-3 text-[13px] font-semibold text-dim">
-        Відповідено в іншому місці: {message}
+        {t("question.answeredElsewhere", { text: message })}
       </div>
     );
   }
@@ -135,9 +222,9 @@ export function QuestionCard({ file }: { file: FileEntry }) {
     return (
       <div id="question" className="my-4 rounded-[8px] border border-[#e0ae45]/45 bg-[#fff9ed] p-4 shadow-card">
         <div className="mb-2 inline-flex items-center gap-1.5 rounded-full bg-[#f5dfae] px-2 py-0.5 text-[11px] font-bold text-[#8a5a00]">
-          <Pause className="h-3.5 w-3.5" aria-hidden /> чекає на відповідь
+          <Pause className="h-3.5 w-3.5" aria-hidden /> {t("question.waiting")}
         </div>
-        <div className="text-[13px] font-semibold text-err">tmux-пейн недоступний</div>
+        <div className="text-[13px] font-semibold text-err">{t("question.noPane")}</div>
         {pending.kind === "plan" ? (
           <pre className="mt-2 max-h-[320px] overflow-auto whitespace-pre-wrap break-words rounded-[8px] border border-line bg-bg px-3 py-2 text-[13px]">{pending.plan}</pre>
         ) : (
@@ -149,7 +236,7 @@ export function QuestionCard({ file }: { file: FileEntry }) {
           ))
         )}
         <button className="mt-3 rounded-[8px] bg-accent px-3 py-1.5 text-[13px] font-bold text-white disabled:opacity-60" disabled={resuming} onClick={resume}>
-          відкрити сесію
+          {t("question.openSession")}
         </button>
         {message ? <div className="mt-2 text-[12px] font-semibold text-dim">{message}</div> : null}
       </div>
@@ -160,9 +247,9 @@ export function QuestionCard({ file }: { file: FileEntry }) {
     <div id="question" className="my-4 rounded-[8px] border border-[#e0ae45]/45 bg-[#fff9ed] p-4 shadow-card">
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <span className="inline-flex items-center gap-1.5 rounded-full bg-[#f5dfae] px-2 py-0.5 text-[11px] font-bold text-[#8a5a00]">
-          <Pause className="h-3.5 w-3.5" aria-hidden /> чекає на відповідь
+          <Pause className="h-3.5 w-3.5" aria-hidden /> {t("question.waiting")}
         </span>
-        {!hasPane ? <span className="text-[12px] font-semibold text-err">tmux-пейн недоступний</span> : null}
+        {!hasPane ? <span className="text-[12px] font-semibold text-err">{t("question.noPane")}</span> : null}
       </div>
       {pending.kind === "plan" ? (
         <>
@@ -171,16 +258,16 @@ export function QuestionCard({ file }: { file: FileEntry }) {
           </pre>
           <textarea
             className="mt-3 min-h-20 w-full resize-y rounded-[8px] border border-line bg-bg px-3 py-2 text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-accent/35"
-            placeholder="Коментар до відхилення…"
+            placeholder={t("question.rejectComment")}
             value={comment}
             onChange={(event) => setComment(event.target.value)}
           />
           <div className="mt-3 flex flex-wrap gap-2">
-            <button className="inline-flex items-center gap-1.5 rounded-[8px] bg-ok px-3 py-1.5 text-[13px] font-bold text-white disabled:opacity-60" disabled={disabled} onClick={() => submit({ approve: true }, "затверджено")}>
-              <Check className="h-4 w-4" aria-hidden /> Затвердити
+            <button className="inline-flex items-center gap-1.5 rounded-[8px] bg-ok px-3 py-1.5 text-[13px] font-bold text-white disabled:opacity-60" disabled={disabled} onClick={() => submit({ approve: true }, t("question.approved"))}>
+              <Check className="h-4 w-4" aria-hidden /> {t("question.approve")}
             </button>
-            <button className="inline-flex items-center gap-1.5 rounded-[8px] bg-err px-3 py-1.5 text-[13px] font-bold text-white disabled:opacity-60" disabled={disabled} onClick={() => submit({ approve: false, text: comment }, "відхилено")}>
-              <X className="h-4 w-4" aria-hidden /> Відхилити
+            <button className="inline-flex items-center gap-1.5 rounded-[8px] bg-err px-3 py-1.5 text-[13px] font-bold text-white disabled:opacity-60" disabled={disabled} onClick={() => submit({ approve: false, text: comment }, t("question.rejected"))}>
+              <X className="h-4 w-4" aria-hidden /> {t("question.reject")}
             </button>
           </div>
         </>
@@ -223,25 +310,25 @@ export function QuestionCard({ file }: { file: FileEntry }) {
             <div className="mt-3 flex gap-2">
               <input
                 className="min-w-0 flex-1 rounded-[8px] border border-line bg-bg px-3 py-1.5 text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-accent/35"
-                placeholder="Своя відповідь…"
+                placeholder={t("question.ownAnswer")}
                 value={text}
                 onChange={(event) => setText(event.target.value)}
               />
               <button className="inline-flex items-center gap-1.5 rounded-[8px] bg-accent px-3 py-1.5 text-[13px] font-bold text-white disabled:opacity-60" disabled={disabled || !text.trim()} onClick={() => submit({ text }, text)}>
-                <Send className="h-4 w-4" aria-hidden /> Надіслати
+                <Send className="h-4 w-4" aria-hidden /> {t("common.send")}
               </button>
             </div>
           ) : null}
           {needsExplicitSubmit ? (
             <button className="mt-3 inline-flex items-center gap-1.5 rounded-[8px] bg-accent px-3 py-1.5 text-[13px] font-bold text-white disabled:opacity-60" disabled={disabled || !allAnswered} onClick={() => submit({ answers: packedAnswers() }, selectedLabel)}>
-              <Send className="h-4 w-4" aria-hidden /> Надіслати
+              <Send className="h-4 w-4" aria-hidden /> {t("common.send")}
             </button>
           ) : null}
         </>
       )}
       {state === "delivering" ? (
         <div className="mt-3 inline-flex items-center gap-1.5 text-[12px] font-semibold text-dim">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> надсилаю…
+          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> {t("common.sending")}
         </div>
       ) : null}
       {state === "failed" ? <div className="mt-3 text-[12px] font-semibold text-err">{message}</div> : null}

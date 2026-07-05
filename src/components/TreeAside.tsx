@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { ChevronRight } from "@/components/icons";
+import { useLocale } from "@/lib/i18n";
 import type { FileEntry } from "@/lib/types";
 
 import { FlipRow } from "./FlipRow";
@@ -10,6 +11,7 @@ import { activityDot, cleanTitle, engineBadge, fmtAge } from "./utils";
 
 /** Dense collapsed strip of quiet childless conversations and finished loose tasks. */
 export function ResidualStrip({ items, onSelect }: { items: FileEntry[]; onSelect: (file: FileEntry) => void }) {
+  const { t } = useLocale();
   const [open, setOpen] = useState(false);
   return (
     <div className="shrink-0 border-t border-line bg-panel">
@@ -19,7 +21,7 @@ export function ResidualStrip({ items, onSelect }: { items: FileEntry[]; onSelec
         onClick={() => setOpen((value) => !value)}
       >
         <ChevronRight className={`h-3.5 w-3.5 transition-transform ${open ? "rotate-90" : ""}`} aria-hidden />
-        Тихі розмови й задачі
+        {t("tree.quiet")}
         <span className="font-semibold normal-case tracking-normal">{items.length}</span>
       </button>
       {open ? (

@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 
 import { ArrowRight, ImageIcon, X } from "@/components/icons";
+import { getLocale, translate, useLocale } from "@/lib/i18n";
 import { inboxImageExt, MAX_INBOX_IMAGE_BYTES } from "@/lib/imagePolicy";
 
 export interface PendingImage {
@@ -18,14 +19,14 @@ function readImage(file: File): Promise<PendingImage> {
       const dataUrl = String(reader.result);
       const comma = dataUrl.indexOf(",");
       if (comma < 0) {
-        reject(new Error("не вдалося прочитати картинку"));
+        reject(new Error(translate(getLocale(), "img.readFailed")));
         return;
       }
       const base64 = dataUrl.slice(comma + 1);
       resolve({ base64, mime: file.type || "image/png", preview: dataUrl });
     };
-    reader.onerror = () => reject(reader.error ?? new Error("не вдалося прочитати картинку"));
-    reader.onabort = () => reject(new Error("читання картинки перервано"));
+    reader.onerror = () => reject(reader.error ?? new Error(translate(getLocale(), "img.readFailed")));
+    reader.onabort = () => reject(new Error(translate(getLocale(), "img.readAborted")));
     reader.readAsDataURL(file);
   });
 }
@@ -46,11 +47,11 @@ export function useImageAttachments(handlers: { onError: (message: string) => vo
     const accepted: File[] = [];
     for (const file of files) {
       if (inboxImageExt(file.type) === null) {
-        handlers.onError(`непідтримуваний формат картинки: ${file.name || file.type || "невідомий файл"}`);
+        handlers.onError(translate(getLocale(), "img.unsupported", { name: file.name || file.type || translate(getLocale(), "img.unknownFile") }));
         continue;
       }
       if (file.size > MAX_INBOX_IMAGE_BYTES) {
-        handlers.onError(`${file.name || "картинка"}: завелика (ліміт 10 МБ)`);
+        handlers.onError(translate(getLocale(), "img.tooLarge", { name: file.name || translate(getLocale(), "img.image") }));
         continue;
       }
       accepted.push(file);
@@ -65,7 +66,7 @@ export function useImageAttachments(handlers: { onError: (message: string) => vo
         if (!rejectedSome) handlers.onAdded?.();
       })
       .catch((error: unknown) => {
-        handlers.onError(error instanceof Error ? error.message : "помилка картинки");
+        handlers.onError(error instanceof Error ? error.message : translate(getLocale(), "img.error"));
       });
   };
 
@@ -89,17 +90,18 @@ export function useImageAttachments(handlers: { onError: (message: string) => vo
 }
 
 export function ImagePreviewStrip({ images, onRemove }: { images: PendingImage[]; onRemove: (idx: number) => void }) {
+  const { t } = useLocale();
   if (!images.length) return null;
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       {images.map((image, idx) => (
         <div key={idx} className="group/img relative">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={image.preview} alt={`прев'ю картинки ${idx + 1}`} className="h-10 w-10 rounded border border-line object-cover" />
+          <img src={image.preview} alt={t("img.previewAlt", { n: idx + 1 })} className="h-10 w-10 rounded border border-line object-cover" />
           <button
             type="button"
             onClick={() => onRemove(idx)}
-            aria-label={`Прибрати картинку ${idx + 1}`}
+            aria-label={t("img.removeAria", { n: idx + 1 })}
             className="absolute -right-1 -top-1 hidden h-4 w-4 items-center justify-center rounded-full border border-line bg-panel text-dim shadow-card hover:text-err group-hover/img:flex focus-visible:flex focus-visible:outline-none"
           >
             <X className="h-2.5 w-2.5" aria-hidden />
@@ -107,7 +109,7 @@ export function ImagePreviewStrip({ images, onRemove }: { images: PendingImage[]
         </div>
       ))}
       <span className="inline-flex items-center gap-1 text-[10.5px] font-semibold text-dim">
-        {images.length} {images.length === 1 ? "картинка" : "картинки"} <ArrowRight className="h-3 w-3" aria-hidden /> шляхами до файлів
+        {t("composer.imagesCount", { count: images.length })} <ArrowRight className="h-3 w-3" aria-hidden /> {t("img.toFilePaths")}
       </span>
     </div>
   );

@@ -4,11 +4,12 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { Loader2, Play, X } from "@/components/icons";
 import { useDictation } from "@/hooks/useDictation";
+import { useLocale } from "@/lib/i18n";
 import type { FileEntry } from "@/lib/types";
 
 import { ImagePickerButton, ImagePreviewStrip, useImageAttachments } from "./imageAttachments";
 import { MicButtonView } from "./MicButton";
-import { engineTintOf } from "./utils";
+import { cleanTitle, engineTintOf } from "./utils";
 
 type Engine = "claude" | "codex";
 
@@ -44,7 +45,17 @@ function writeField(id: string, name: string, value: string) {
 
 /** Everything a draft keeps in sessionStorage; called when the draft leaves the scheme. */
 export function clearDraftStorage(id: string) {
-  for (const name of ["engine", "cwd", "text", "boot"]) sessionStorage.removeItem(field(id, name));
+  for (const name of ["engine", "cwd", "text", "boot", "src"]) sessionStorage.removeItem(field(id, name));
+}
+
+/** Source transcript a handoff draft continues; empty for a plain draft. */
+export function draftSrc(id: string): string {
+  return readField(id, "src");
+}
+
+/** Marks a fresh draft as a handoff of the given transcript, before it mounts. */
+export function setDraftSrc(id: string, src: string) {
+  writeField(id, "src", src);
 }
 
 function readBoot(id: string): Boot | null {
@@ -76,10 +87,21 @@ export function DraftAgentPane({
   onClose: () => void;
   onSpawned: (file: FileEntry) => void;
 }) {
-  const [engine, setEngineState] = useState<Engine>(() => (readField(draftId, "engine") === "codex" ? "codex" : "claude"));
+  const { t } = useLocale();
+  /* A handoff draft carries the transcript it continues; set by the opener
+     before the draft lands on the scheme, immutable for the draft's life. */
+  const [src] = useState(() => readField(draftId, "src"));
+  const srcFile = src ? (files.find((entry) => entry.path === src) ?? null) : null;
+  const [engine, setEngineState] = useState<Engine>(() => {
+    const stored = readField(draftId, "engine");
+    if (stored === "codex" || stored === "claude") return stored;
+    return srcFile?.engine === "codex" ? "codex" : "claude";
+  });
   const [cwd, setCwdState] = useState(() => readField(draftId, "cwd"));
   const [dirs, setDirs] = useState<string[]>([]);
-  const [text, setTextState] = useState(() => readField(draftId, "text"));
+  const [text, setTextState] = useState(
+    () => readField(draftId, "text") || (src ? t("draft.readPrompt", { src }) : ""),
+  );
   const [boot, setBootState] = useState<Boot | null>(() => readBoot(draftId));
   const [busy, setBusy] = useState(false);
   const [voiceSending, setVoiceSending] = useState(false);
@@ -124,18 +146,21 @@ export function DraftAgentPane({
   const dictation = useDictation({
     onError: (message) => setStatus({ kind: "err", text: message }),
     onUnclaimedText: insertSpoken,
+    onLiveCommit: insertSpoken,
   });
 
-  /* Recent working directories, the current project's first. */
+  /* Recent working directories, the current project's first; a handoff draft
+     inherits the source transcript's own cwd over everything else. */
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/spawn?project=" + encodeURIComponent(project))
-      .then((res) => res.json() as Promise<{ dirs?: string[] }>)
+    fetch("/api/spawn?project=" + encodeURIComponent(project) + (src ? "&src=" + encodeURIComponent(src) : ""))
+      .then((res) => res.json() as Promise<{ dirs?: string[]; cwd?: string | null }>)
       .then((json) => {
-        if (cancelled || !Array.isArray(json.dirs)) return;
-        setDirs(json.dirs);
+        if (cancelled) return;
+        if (Array.isArray(json.dirs)) setDirs(json.dirs);
         setCwdState((prev) => {
-          const next = prev || json.dirs?.[0] || "";
+          const inherited = typeof json.cwd === "string" ? json.cwd : "";
+          const next = prev || inherited || json.dirs?.[0] || "";
           if (next !== prev) writeField(draftId, "cwd", next);
           return next;
         });
@@ -144,7 +169,12 @@ export function DraftAgentPane({
     return () => {
       cancelled = true;
     };
-  }, [project, draftId]);
+  }, [project, draftId, src]);
+
+  /* Realtime dictation overlays the in-flight transcript on the draft; the
+     draft state itself stays clean until stop() resolves and insertSpoken
+     appends the final text, so the two never double up. */
+  const displayText = dictation.liveText ? (text ? text.trimEnd() + " " : "") + dictation.liveText : text;
 
   /* The field grows with its content up to ~6 rows, then scrolls inside itself. */
   useLayoutEffect(() => {
@@ -152,7 +182,7 @@ export function DraftAgentPane({
     if (!el) return;
     el.style.height = "0px";
     el.style.height = Math.min(el.scrollHeight + 2, 160) + "px";
-  }, [text]);
+  }, [displayText]);
 
   /* The handover: a claude spawn knows its transcript path up front and waits
      for exactly that file; a codex rollout has no knowable path, so the first
@@ -166,12 +196,14 @@ export function DraftAgentPane({
           (file) =>
             file.engine === "codex" &&
             file.root === "codex-sessions" &&
-            !file.parent &&
+            /* A handoff spawn gets linked under its source by the scanner, so
+               the fresh rollout may already carry a parent — accept that too. */
+            (src ? file.parent === src || !file.parent : !file.parent) &&
             file.mtime >= boot.at / 1000 - 30 &&
             (!known || !known.has(file.path)),
         );
     if (hit) onSpawned(hit);
-  }, [files, boot, onSpawned]);
+  }, [files, boot, onSpawned, src]);
 
   useEffect(() => {
     if (!boot) return;
@@ -189,7 +221,7 @@ export function DraftAgentPane({
     const payloadText = overrideText ?? text;
     if (busy || voiceSending || boot) return;
     if (!cwd.trim()) {
-      setStatus({ kind: "err", text: "вкажи робочу директорію" });
+      setStatus({ kind: "err", text: t("draft.needDir") });
       return;
     }
     if (!payloadText.trim() && !attachments.images.length) return;
@@ -204,11 +236,14 @@ export function DraftAgentPane({
           cwd: cwd.trim(),
           prompt: payloadText,
           images: attachments.images.map((image) => ({ base64: image.base64, mime: image.mime })),
+          /* Ties the fresh agent to the source conversation: the scanner links
+             its transcript as a handoff branch next to the parent's node. */
+          ...(src ? { src } : {}),
         }),
       });
       const json = (await res.json()) as { ok?: boolean; target?: string; path?: string | null; error?: string };
       if (!res.ok || !json.ok) {
-        setStatus({ kind: "err", text: json.error ?? "не вдалося запустити" });
+        setStatus({ kind: "err", text: json.error ?? t("draft.launchFailed") });
         return;
       }
       knownRef.current = new Set(files.map((file) => file.path));
@@ -216,7 +251,7 @@ export function DraftAgentPane({
       setText("");
       attachments.clear();
     } catch {
-      setStatus({ kind: "err", text: "сервер недоступний" });
+      setStatus({ kind: "err", text: t("common.serverUnavailable") });
     } finally {
       setBusy(false);
     }
@@ -229,7 +264,9 @@ export function DraftAgentPane({
     try {
       const spoken = await dictation.stop();
       if (spoken === null) return;
-      const combined = textRef.current ? textRef.current.trimEnd() + " " + spoken : spoken;
+      /* Realtime mode: `spoken` is just the uncommitted tail — often empty,
+         the rest already landed in the draft through onLiveCommit. */
+      const combined = spoken ? (textRef.current ? textRef.current.trimEnd() + " " + spoken : spoken) : textRef.current;
       setText(combined);
       await send(combined);
     } finally {
@@ -250,11 +287,11 @@ export function DraftAgentPane({
       data-pan-ignore
       className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[10px] border border-t-4 border-line bg-panel shadow-card"
       style={{ borderTopColor: tint.color }}
-      aria-label="Чернетка нової розмови з агентом"
+      aria-label={t("draft.paneAria")}
     >
       <header className="flex h-10 shrink-0 items-center gap-1.5 border-b border-line px-2.5" style={{ backgroundColor: tint.soft }}>
-        <span className="h-2 w-2 shrink-0 rounded-full bg-[#c9c9d1]" title="агент ще не запущений" />
-        <div className="flex shrink-0 items-center gap-1" role="radiogroup" aria-label="Двигун агента">
+        <span className="h-2 w-2 shrink-0 rounded-full bg-[#c9c9d1]" title={t("draft.notStarted")} />
+        <div className="flex shrink-0 items-center gap-1" role="radiogroup" aria-label={t("draft.engineAria")}>
           {ENGINES.map(({ key, label }) => {
             const active = engine === key;
             const chip = engineTintOf(key);
@@ -276,10 +313,15 @@ export function DraftAgentPane({
             );
           })}
         </div>
-        <span className="min-w-0 flex-1 truncate text-[12px] font-semibold text-dim">нова розмова</span>
+        <span
+          className="min-w-0 flex-1 truncate text-[12px] font-semibold text-dim"
+          title={srcFile ? cleanTitle(srcFile.title) : undefined}
+        >
+          {src ? t("draft.handoffLabel", { title: srcFile ? cleanTitle(srcFile.title, 60) : t("draft.conversation") }) : t("draft.newConvo")}
+        </span>
         <button
           className="inline-flex shrink-0 items-center rounded-[8px] border border-line bg-bg px-1.5 py-0.5 text-dim hover:border-err/40 hover:text-err focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-          aria-label="Прибрати чернетку розмови"
+          aria-label={t("draft.dismiss")}
           onClick={onClose}
         >
           <X className="h-3 w-3" aria-hidden />
@@ -287,14 +329,14 @@ export function DraftAgentPane({
       </header>
 
       <div className="flex shrink-0 items-center gap-1.5 border-b border-line bg-[#fbfbfd] px-2.5 py-1.5">
-        <span className="shrink-0 text-[10px] font-semibold text-dim">директорія</span>
+        <span className="shrink-0 text-[10px] font-semibold text-dim">{t("draft.directory")}</span>
         <input
           value={cwd}
           disabled={fieldsDisabled}
           onChange={(event) => setCwd(event.target.value)}
           list={dirListId}
           placeholder="/home/…/Projects/…"
-          aria-label="Робоча директорія агента"
+          aria-label={t("draft.dirAria")}
           className="min-w-0 flex-1 rounded-[6px] border border-line bg-panel px-2 py-1 font-mono text-[11px] text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-60"
         />
         <datalist id={dirListId}>
@@ -309,18 +351,18 @@ export function DraftAgentPane({
           <div className="flex flex-1 flex-col justify-end gap-3">
             <div className="flex justify-end">
               <span className="min-w-0 max-w-[85%] whitespace-pre-wrap rounded-[10px] rounded-br-[3px] bg-[#ecebfb] px-2.5 py-1.5 text-[12px] text-[#333]">
-                {boot.prompt || "(картинки)"}
+                {boot.prompt || t("draft.imagesOnly")}
               </span>
             </div>
             <div className="flex items-center gap-2 text-[11.5px] font-semibold text-dim">
               <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
               <span>
-                агент запущений у tmux {boot.target} — чекаю, поки розмова з&apos;явиться тут…
+                {t("draft.launched", { target: boot.target })}
               </span>
             </div>
             {slowBoot ? (
               <div className="text-[11px] text-dim">
-                Щось довго. Перевір вікно tmux {boot.target} — щойно транскрипт з&apos;явиться, панель підхопить його сама.
+                {t("draft.slow", { target: boot.target })}
               </div>
             ) : null}
           </div>
@@ -330,9 +372,13 @@ export function DraftAgentPane({
               {engine === "claude" ? "Claude" : "Codex"}
             </span>
             <div className="max-w-[360px] text-[12px] text-dim">
-              Обери двигун і директорію, напиши перший промпт — агент запуститься в tmux, і розмова продовжиться в цій самій
-              панелі.
+              {src ? t("draft.hintRelay") : t("draft.hintNew")}
             </div>
+            {src ? (
+              <div className="max-w-[420px] truncate font-mono text-[10px] text-dim" title={src}>
+                {src}
+              </div>
+            ) : null}
           </div>
         )}
       </div>
@@ -343,12 +389,13 @@ export function DraftAgentPane({
           void send();
         }}
         className="flex shrink-0 flex-col gap-1.5 border-t border-line bg-[#fbfbfd] px-2.5 py-2"
-        aria-label="Перший промпт для нового агента"
+        aria-label={t("draft.promptAria")}
       >
         <textarea
           ref={inputRef}
-          value={text}
+          value={displayText}
           rows={1}
+          readOnly={Boolean(dictation.liveText)}
           onChange={(event) => setText(event.target.value)}
           onPaste={attachments.handlePaste}
           onKeyDown={(event) => {
@@ -358,22 +405,22 @@ export function DraftAgentPane({
               else void send();
             }
           }}
-          placeholder="перший промпт — агент запуститься в tmux…"
-          aria-label="Текст першого промпта"
+          placeholder={t("draft.placeholder")}
+          aria-label={t("draft.promptTextAria")}
           disabled={fieldsDisabled}
           className="w-full resize-none overflow-y-auto rounded-[10px] border border-line bg-panel px-2.5 py-1.5 text-[12.5px] leading-[18px] text-[#222] placeholder:text-dim focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-60"
         />
         <div className="flex items-center justify-between gap-1.5">
           <span
             className="inline-flex min-w-0 items-center gap-1 rounded-full bg-chip px-1.5 py-1 font-mono text-[9.5px] font-semibold text-[#555]"
-            title="нове tmux-вікно зі свіжим агентом"
+            title={t("draft.newWindowTitle")}
           >
-            <Play className="h-3 w-3 shrink-0" aria-hidden /> новий агент
+            <Play className="h-3 w-3 shrink-0" aria-hidden /> {t("draft.newAgent")}
           </span>
           <div className="flex shrink-0 items-center gap-1.5">
             <MicButtonView {...dictation} busy={voiceSending} onText={insertSpoken} />
             <ImagePickerButton
-              ariaLabel="Додати картинки до промпта"
+              ariaLabel={t("draft.addImages")}
               className="inline-flex shrink-0 items-center justify-center rounded-[8px] border border-line bg-panel p-2 text-dim hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
               onFiles={attachments.addFiles}
             />
@@ -381,7 +428,7 @@ export function DraftAgentPane({
               type={dictationRecording ? "button" : "submit"}
               onClick={dictationRecording ? () => void stopAndSend() : undefined}
               disabled={!canSend}
-              aria-label={dictationRecording ? "Зупинити запис і запустити агента" : "Запустити агента"}
+              aria-label={dictationRecording ? t("draft.stopAndLaunch") : t("composer.launchAgent")}
               style={dictationRecording ? undefined : { backgroundColor: tint.color, borderColor: tint.color }}
               className={`inline-flex shrink-0 items-center justify-center rounded-[8px] border p-2 text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:opacity-40 ${
                 dictationRecording ? "border-err bg-err hover:opacity-90" : "hover:opacity-90"

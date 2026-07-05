@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { Trash2 } from "@/components/icons";
+import { useLocale } from "@/lib/i18n";
 import type { FileEntry } from "@/lib/types";
 
 /**
@@ -12,6 +13,7 @@ import type { FileEntry } from "@/lib/types";
  * host view drop the node right away instead of waiting out the files poll.
  */
 export function DeleteFileButton({ file, onDeleted }: { file: FileEntry; onDeleted?: () => void }) {
+  const { t } = useLocale();
   const [confirming, setConfirming] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState("");
@@ -31,13 +33,13 @@ export function DeleteFileButton({ file, onDeleted }: { file: FileEntry; onDelet
       const res = await fetch(`/api/log?path=${encodeURIComponent(file.path)}`, { method: "DELETE" });
       const json = (await res.json()) as { ok?: boolean; error?: string };
       if (!res.ok || !json.ok) {
-        setError(json.error ?? "не вдалося видалити");
+        setError(json.error ?? t("common.failedDelete"));
         return;
       }
       setConfirming(false);
       onDeleted?.();
     } catch {
-      setError("сервер недоступний");
+      setError(t("common.serverUnavailable"));
     } finally {
       setDeleting(false);
     }
@@ -46,21 +48,21 @@ export function DeleteFileButton({ file, onDeleted }: { file: FileEntry; onDelet
   if (confirming) {
     return (
       <span className="inline-flex shrink-0 items-center gap-1 rounded-[10px] border border-err/30 bg-[#fff5f5] px-1.5 py-0.5 text-[11px]">
-        <span className="px-0.5 font-semibold text-err">Видалити з диска?</span>
+        <span className="px-0.5 font-semibold text-err">{t("delFile.confirm")}</span>
         <button
           type="button"
           className="rounded-lg bg-err px-2 py-0.5 font-bold text-white disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-err/50"
           disabled={deleting}
           onClick={remove}
         >
-          {deleting ? "…" : "Так"}
+          {deleting ? "…" : t("common.yes")}
         </button>
         <button
           type="button"
           className="rounded-lg border border-line bg-panel px-2 py-0.5 font-semibold text-dim focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
           onClick={() => setConfirming(false)}
         >
-          Ні
+          {t("common.no")}
         </button>
       </span>
     );
@@ -70,8 +72,8 @@ export function DeleteFileButton({ file, onDeleted }: { file: FileEntry; onDelet
       <button
         type="button"
         className="inline-flex items-center rounded-[8px] border border-line bg-bg px-1.5 py-0.5 text-dim hover:border-err/40 hover:text-err focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-        aria-label="Видалити розмову з диска"
-        title="Видалити розмову з диска"
+        aria-label={t("delFile.aria")}
+        title={t("delFile.aria")}
         onClick={() => setConfirming(true)}
       >
         <Trash2 className="h-3 w-3" aria-hidden />

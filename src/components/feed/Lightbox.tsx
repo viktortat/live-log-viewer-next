@@ -2,8 +2,10 @@
 
 import { Minus, Plus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { X } from "@/components/icons";
+import { useLocale } from "@/lib/i18n";
 
 interface Props {
   src: string;
@@ -20,6 +22,7 @@ const MAX_SCALE = 8;
  * click toggles fit/200%, Esc or backdrop click closes.
  */
 export function Lightbox({ src, alt, caption, onClose }: Props) {
+  const { t } = useLocale();
   const [scale, setScale] = useState(1);
   const [tx, setTx] = useState(0);
   const [ty, setTy] = useState(0);
@@ -55,7 +58,10 @@ export function Lightbox({ src, alt, caption, onClose }: Props) {
     setTy(0);
   };
 
-  return (
+  /* Panes on the scheme canvas sit under a CSS transform, which turns the
+     transformed ancestor into the containing block for fixed elements — the
+     overlay would fill the pane, not the screen. Portal to <body> escapes it. */
+  return createPortal(
     <div
       className="fixed inset-0 z-50 flex flex-col bg-black/85 backdrop-blur-sm"
       role="dialog"
@@ -71,28 +77,28 @@ export function Lightbox({ src, alt, caption, onClose }: Props) {
         <span className="ml-auto flex items-center gap-1.5">
           <button
             className="inline-flex items-center rounded-lg border border-white/25 bg-white/10 px-2.5 py-1 text-white hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
-            aria-label="Зменшити"
+            aria-label={t("lightbox.zoomOut")}
             onClick={() => zoomBy(1 / 1.4)}
           >
             <Minus className="h-4 w-4" aria-hidden />
           </button>
           <button
             className="rounded-lg border border-white/25 bg-white/10 px-2 py-1 text-[11.5px] font-semibold text-white hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
-            aria-label="Скинути масштаб"
+            aria-label={t("lightbox.resetZoom")}
             onClick={reset}
           >
             {Math.round(scale * 100)}%
           </button>
           <button
             className="inline-flex items-center rounded-lg border border-white/25 bg-white/10 px-2.5 py-1 text-white hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
-            aria-label="Збільшити"
+            aria-label={t("lightbox.zoomIn")}
             onClick={() => zoomBy(1.4)}
           >
             <Plus className="h-4 w-4" aria-hidden />
           </button>
           <button
             className="ml-1 inline-flex items-center rounded-lg border border-white/25 bg-white/10 px-2.5 py-1 text-white hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
-            aria-label="Закрити"
+            aria-label={t("common.close")}
             onClick={onClose}
           >
             <X className="h-4 w-4" aria-hidden />
@@ -139,6 +145,7 @@ export function Lightbox({ src, alt, caption, onClose }: Props) {
           />
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

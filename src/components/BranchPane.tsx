@@ -5,12 +5,12 @@ import { useEffect, useRef, useState } from "react";
 
 import { ChevronRight, X } from "@/components/icons";
 import { registerPane } from "@/lib/chime";
+import { type TFunction, useLocale } from "@/lib/i18n";
 import type { FileEntry } from "@/lib/types";
 
 import { registerLinkTarget } from "./AgentLink";
 import { DeleteFileButton } from "./DeleteFileButton";
 import { FlipRow } from "./FlipRow";
-import { canHandoff, HandoffHandle } from "./HandoffHandle";
 import { LogFeed } from "./LogFeed";
 import { paneState, type PaneState } from "./paneState";
 import { CtxChip, GoalChip, PlanChip } from "./PlanChip";
@@ -29,13 +29,14 @@ const PANE_TONES: Record<PaneState, { section: string; header: string; glow?: st
   done: { section: "border-line", header: "bg-[#f4f4f6] text-dim opacity-80 saturate-50" },
 };
 
-const DOT_TITLES: Record<PaneState, string> = {
-  live: "працює",
-  waiting: "закінчив хід — чекає відповіді",
-  returned: "повернувся з результатом",
-  stalled: "перервано або чекає дозволу",
-  done: "завершено — можна прибрати",
-};
+/** Maps the internal (Cyrillic) file.kind discriminant to a localized label. */
+function kindLabel(t: TFunction, kind: string): string {
+  if (kind === "сесія") return t("kind.session");
+  if (kind === "субагент") return t("kind.subagent");
+  if (kind === "джоба") return t("kind.job");
+  if (kind === "фон") return t("kind.background");
+  return kind;
+}
 
 interface Props {
   file: FileEntry;
@@ -56,6 +57,7 @@ interface Props {
 }
 
 export function BranchPane({ file, files, tasks, onSelect, isRoot, onClose, dragHandle, noComposer, banner }: Props) {
+  const { t } = useLocale();
   const paneRef = useRef<HTMLElement | null>(null);
   const badge = engineBadge(file);
   const state = paneState(file);
@@ -89,7 +91,7 @@ export function BranchPane({ file, files, tasks, onSelect, isRoot, onClose, drag
         }`}
         {...dragHandle}
       >
-        <span className={`h-2 w-2 shrink-0 rounded-full ${activityDot(file.activity)}`} title={DOT_TITLES[state]} />
+        <span className={`h-2 w-2 shrink-0 rounded-full ${activityDot(file.activity)}`} title={t(`branch.${state}`)} />
         {/* One identity chip: the model when known (engine lives in the tint
             and the tooltip), the engine label as fallback. */}
         {file.model ? (
@@ -109,7 +111,7 @@ export function BranchPane({ file, files, tasks, onSelect, isRoot, onClose, drag
         {file.worktree ? (
           <span
             className="inline-flex shrink-0 items-center gap-0.5 rounded-full border border-line/80 px-1.5 py-0.5 font-mono text-[9.5px] text-dim"
-            title={`Ворк-дерево ${file.worktree}`}
+            title={t("branch.worktree", { name: file.worktree })}
           >
             <GitBranch className="h-2.5 w-2.5" aria-hidden /> {file.worktree}
           </span>
@@ -119,9 +121,9 @@ export function BranchPane({ file, files, tasks, onSelect, isRoot, onClose, drag
         {isRoot ? null : (
           <span
             className="inline-flex shrink-0 items-center gap-0.5 text-[10px] text-dim"
-            title={file.handoff ? "агент, породжений хендоффом цієї розмови" : "гілка цієї розмови"}
+            title={file.handoff ? t("branch.handoffTitle") : t("branch.branchTitle")}
           >
-            <CornerDownRight className="h-3 w-3" aria-hidden /> {file.handoff ? "хендофф" : file.kind}
+            <CornerDownRight className="h-3 w-3" aria-hidden /> {file.handoff ? t("kind.handoff") : kindLabel(t, file.kind)}
           </span>
         )}
         <span className="min-w-0 flex-1 truncate text-[12px] font-semibold" title={cleanTitle(file.title)}>
@@ -132,7 +134,7 @@ export function BranchPane({ file, files, tasks, onSelect, isRoot, onClose, drag
         {onClose ? (
           <button
             className="inline-flex shrink-0 items-center rounded-[8px] border border-line bg-bg px-1.5 py-0.5 text-dim hover:border-err/40 hover:text-err focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-            aria-label={`Прибрати колонку ${cleanTitle(file.title, 60)}`}
+            aria-label={t("branch.removeColumn", { title: cleanTitle(file.title, 60) })}
             onClick={onClose}
           >
             <X className="h-3 w-3" aria-hidden />
@@ -162,13 +164,13 @@ export function BranchPane({ file, files, tasks, onSelect, isRoot, onClose, drag
         compact
       />
       {noComposer ? null : <TmuxComposer file={file} />}
-      {canHandoff(file) ? <HandoffHandle file={file} paneRef={paneRef} /> : null}
     </section>
   );
 }
 
 /** Collapsed background-task row: glyph, title, PID chip, kill; click expands an inline mini feed. */
 export function TaskStrip({ file, files, onSelect }: { file: FileEntry; files: FileEntry[]; onSelect: (file: FileEntry) => void }) {
+  const { t } = useLocale();
   const [open, setOpen] = useState(false);
   const title = cleanTitle(file.cmdDesc || file.title, 80);
   return (
@@ -177,7 +179,7 @@ export function TaskStrip({ file, files, onSelect }: { file: FileEntry; files: F
         <button
           className="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-[6px] text-left hover:bg-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
           aria-expanded={open}
-          aria-label={`${open ? "Згорнути" : "Розгорнути"} фонову задачу ${title}`}
+          aria-label={t("branch.toggleBackground", { action: open ? t("branch.collapse") : t("branch.expand"), title })}
           onClick={() => setOpen((value) => !value)}
         >
           <ChevronRight className={`h-3.5 w-3.5 shrink-0 text-dim transition-transform ${open ? "rotate-90" : ""}`} aria-hidden />

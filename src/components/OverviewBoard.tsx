@@ -3,20 +3,29 @@
 import { useMemo } from "react";
 
 import { useColumns } from "@/hooks/useColumns";
+import { useLocale } from "@/lib/i18n";
 import type { FileEntry } from "@/lib/types";
 
 import { buildBranchGroups, buildProjectSummaries, projectKey } from "./projectModel";
-import { activityDot, cleanTitle, engineBadge, fmtAge, ukPlural } from "./utils";
+import { activityDot, cleanTitle, engineBadge, fmtAge } from "./utils";
 
 interface Props {
   files: FileEntry[];
+  /** Shelved projects: their cards stay off the board until unarchived or live again. */
+  archivedProjects: ReadonlySet<string>;
   onSelectProject: (project: string) => void;
   onSelectFile: (file: FileEntry) => void;
 }
 
-export function OverviewBoard({ files, onSelectProject, onSelectFile }: Props) {
+export function OverviewBoard({ files, archivedProjects, onSelectProject, onSelectFile }: Props) {
+  const { t } = useLocale();
   const cols = useColumns();
-  const summaries = useMemo(() => buildProjectSummaries(files), [files]);
+  const allSummaries = useMemo(() => buildProjectSummaries(files), [files]);
+  const summaries = useMemo(
+    () => allSummaries.filter((summary) => !archivedProjects.has(summary.project)),
+    [allSummaries, archivedProjects],
+  );
+  const archivedCount = allSummaries.length - summaries.length;
   const totalLive = useMemo(() => summaries.reduce((sum, s) => sum + s.liveCount, 0), [summaries]);
   const liveProjects = summaries.filter((s) => s.liveCount > 0).length;
   const cards = useMemo(
@@ -38,11 +47,12 @@ export function OverviewBoard({ files, onSelectProject, onSelectFile }: Props) {
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <div className="flex h-10 shrink-0 items-center gap-2.5 border-b border-line bg-panel px-4">
-        <h1 className="text-[13.5px] font-bold">Огляд</h1>
+        <h1 className="text-[13.5px] font-bold">{t("rail.overview")}</h1>
         <span className="text-[11.5px] text-dim">
           {totalLive
-            ? `${totalLive} ${ukPlural(totalLive, "гілка працює", "гілки працюють", "гілок працюють")} у ${liveProjects} ${ukPlural(liveProjects, "проєкті", "проєктах", "проєктах")}`
-            : "зараз нічого не працює"}
+            ? t("overview.branchesLiveIn", { count: totalLive, projects: t("overview.projects", { count: liveProjects }) })
+            : t("common.nothingRunning")}
+          {archivedCount ? ` ${t("overview.archived", { count: archivedCount })}` : ""}
         </span>
       </div>
       <div
@@ -94,19 +104,19 @@ export function OverviewBoard({ files, onSelectProject, onSelectFile }: Props) {
                     );
                   })}
                   {moreLive > 0 ? (
-                    <span className="px-1 text-[10.5px] font-semibold text-dim">ще {moreLive} live</span>
+                    <span className="px-1 text-[10.5px] font-semibold text-dim">{t("overview.moreLive", { count: moreLive })}</span>
                   ) : null}
                 </span>
               ) : (
                 <span className="text-[11px] text-dim">
-                  тихо · остання активність {latest ? fmtAge(latest.mtime) : "—"}
+                  {t("overview.quiet", { age: latest ? fmtAge(latest.mtime) : "—" })}
                 </span>
               )}
             </button>
           );
         })}
         {!summaries.length ? (
-          <div className="col-span-full mt-[20vh] text-center text-dim">Логів поки нема</div>
+          <div className="col-span-full mt-[20vh] text-center text-dim">{t("overview.empty")}</div>
         ) : null}
       </div>
     </div>

@@ -3,10 +3,11 @@
 import { useMemo } from "react";
 
 import type { Flow } from "@/lib/flows/types";
+import { type TFunction, useLocale } from "@/lib/i18n";
 import type { ActionEvent, FileEntry } from "@/lib/types";
 import { cleanTitle } from "@/lib/title";
 
-import { ATTENTION_STATES, claimedReviewerPaths, flowByImplementer, STATE_LABELS } from "@/components/flows/flowModel";
+import { ATTENTION_STATES, claimedReviewerPaths, flowByImplementer, stateLabel } from "@/components/flows/flowModel";
 import { isAuxTask, isConversation, isSubagent, kidsIndex, projectKey } from "@/components/projectModel";
 import { fmtAge } from "@/components/utils";
 
@@ -56,9 +57,9 @@ function recentBucketSort(a: SwitchboardItem, b: SwitchboardItem): number {
   return Math.floor(b.smt / FIVE_MIN) - Math.floor(a.smt / FIVE_MIN) || a.file.path.localeCompare(b.file.path);
 }
 
-function timelineLabel(file: FileEntry, latestByFile: ReadonlyMap<string, ActionEvent>): string {
-  if (file.pendingQuestion) return file.pendingQuestion.kind === "plan" ? "чекає затвердження плану" : "чекає відповіді на питання";
-  if (file.waitingInput) return "чекає на відповідь у терміналі";
+function timelineLabel(t: TFunction, file: FileEntry, latestByFile: ReadonlyMap<string, ActionEvent>): string {
+  if (file.pendingQuestion) return file.pendingQuestion.kind === "plan" ? t("status.awaitingPlan") : t("status.awaitingAnswer");
+  if (file.waitingInput) return t("status.awaitingTerminal");
   /* A live agent's own plan step names its current goal better than the last
      timeline event does. */
   if (file.activity === "live" && file.plan?.current) {
@@ -66,10 +67,10 @@ function timelineLabel(file: FileEntry, latestByFile: ReadonlyMap<string, Action
   }
   const event = latestByFile.get(file.path);
   if (event) return `${event.label} · ${fmtAge(event.ts)}`;
-  if (file.activity === "live") return "працює…";
-  if (isReturnedSubagent(file)) return "повернувся з результатом";
-  if (file.activity === "stalled") return "перервано або чекає дозволу";
-  if (isAwaitingUser(file)) return "закінчив хід — чекає відповіді";
+  if (file.activity === "live") return t("status.working");
+  if (isReturnedSubagent(file)) return t("status.returnedResult");
+  if (file.activity === "stalled") return t("status.stalled");
+  if (isAwaitingUser(file)) return t("status.finishedTurn");
   return "";
 }
 
@@ -96,6 +97,7 @@ export function useSwitchboardData(
   archived: ReadonlySet<string> = EMPTY_ARCHIVED,
   flows: Flow[] = EMPTY_FLOWS,
 ): SwitchboardData {
+  const { locale, t } = useLocale();
   return useMemo(() => {
     const counts = descendantCounts(files);
     const latestByFile = new Map<string, ActionEvent>();
@@ -134,11 +136,11 @@ export function useSwitchboardData(
               : age <= DAY
                 ? "recent"
                 : "older";
-        let statusLine = timelineLabel(file, latestByFile);
+        let statusLine = timelineLabel(t, file, latestByFile);
         if (flow) {
           if (ATTENTION_STATES.has(flow.state)) kind = "waiting";
           else if (flow.state === "reviewing" || flow.state === "relaying" || flow.state === "spawning") kind = "working";
-          statusLine = `флоу: ${STATE_LABELS[flow.state]}${flow.stateDetail ? ` — ${flow.stateDetail}` : ""}`;
+          statusLine = `${t("status.flow", { label: stateLabel(t, flow.state) })}${flow.stateDetail ? ` — ${flow.stateDetail}` : ""}`;
         }
         return {
           file,
@@ -161,7 +163,7 @@ export function useSwitchboardData(
     const recent = base.filter((item) => item.kind === "recent").sort(recentBucketSort);
     const older = base.filter((item) => item.kind === "older").sort(recentBucketSort);
     return { waiting, working, recent, older, livePreview: working.slice(0, 3) };
-  }, [files, events, query, now, archived, flows]);
+  }, [files, events, query, now, archived, flows, locale, t]);
 }
 
 const EMPTY_ARCHIVED: ReadonlySet<string> = new Set();

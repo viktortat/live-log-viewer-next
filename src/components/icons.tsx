@@ -1,4 +1,6 @@
 import {
+  Archive,
+  ArchiveRestore,
   ArrowDown,
   ArrowRight,
   ArrowUpToLine,
@@ -30,6 +32,8 @@ import {
 } from "lucide-react";
 
 export {
+  Archive,
+  ArchiveRestore,
   ArrowDown,
   ArrowRight,
   ArrowUpToLine,
