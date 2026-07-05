@@ -419,21 +419,22 @@ export function ProjectDashboard({
           <ArchiveProjectButton files={projectFiles} onArchive={() => onArchive(project)} />
         )}
         <DeleteProjectButton files={projectFiles} />
-        <button
-          type="button"
-          onClick={addDraft}
-          aria-label={t("dash.newConvo")}
-          className="ml-auto flex shrink-0 items-center gap-1 rounded-[8px] border border-line bg-panel px-2.5 py-1 text-[11.5px] font-bold text-ink shadow-card hover:border-accent/45 hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-        >
-          <span className="text-[13px] leading-none text-accent">+</span> {t("dash.agent")}
-        </button>
-        {isMobile ? null : (
+        {isMobile ? (
+          <button
+            type="button"
+            onClick={addDraft}
+            aria-label={t("dash.newConvo")}
+            className="ml-auto flex shrink-0 items-center gap-1 rounded-[8px] border border-line bg-panel px-2.5 py-1 text-[11.5px] font-bold text-ink shadow-card hover:border-accent/45 hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+          >
+            <span className="text-[13px] leading-none text-accent">+</span> {t("dash.agent")}
+          </button>
+        ) : (
           <button
             type="button"
             onClick={toggleTaskPanel}
             aria-pressed={taskPanelOpen}
             aria-label={t("tasks.panelToggleAria")}
-            className={`flex shrink-0 items-center gap-1 rounded-[8px] border px-2.5 py-1 text-[11.5px] font-bold shadow-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 ${
+            className={`ml-auto flex shrink-0 items-center gap-1 rounded-[8px] border px-2.5 py-1 text-[11.5px] font-bold shadow-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 ${
               taskPanelOpen ? "border-accent/45 bg-accent/10 text-accent" : "border-line bg-panel text-ink hover:border-accent/45 hover:text-accent"
             }`}
           >
@@ -517,6 +518,19 @@ export function ProjectDashboard({
                 </div>
               </div>
             )}
+            {/* The create button floats in the bottom-left corner of the board —
+                away from the fixed attention pill in the top-right, above the
+                residual strip. On the phone the header keeps this button. */}
+            <div className="pointer-events-none absolute bottom-4 left-4 z-30 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={addDraft}
+                aria-label={t("dash.newConvo")}
+                className="pointer-events-auto flex shrink-0 items-center gap-1 rounded-[8px] border border-line bg-panel px-3 py-1.5 text-[11.5px] font-bold text-ink shadow-card hover:border-accent/45 hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+              >
+                <span className="text-[13px] leading-none text-accent">+</span> {t("dash.agent")}
+              </button>
+            </div>
           </div>
           {taskPanelOpen ? <TaskPanel tasks={tasks} project={project} onOpenTask={openTask} onClose={toggleTaskPanel} /> : null}
         </div>
