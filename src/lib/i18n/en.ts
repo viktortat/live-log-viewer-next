@@ -113,6 +113,10 @@ export const en = {
   "composer.root": "root",
   "composer.interruptAria": "Interrupt the agent (Escape)",
   "composer.interruptTitle": "send Escape to the agent pane",
+  "composer.compactAria": "Compact the agent's context (/compact)",
+  "composer.compactTitle": "send /compact — the agent condenses its context; a band appears in the feed when done",
+  "composer.compactSent": "compaction started — the band will appear in the feed once it's done",
+  "composer.failedCompact": "couldn't start compaction",
   "composer.addImages": "Add images",
   "composer.stopAndSend": "Stop recording and send",
   "composer.launchAgent": "Launch the agent",
@@ -147,18 +151,7 @@ export const en = {
 
   // AgentLink
   "link.handoffContext": "You've been handed another agent's context — the conversation «{title}». Its transcript: {path} — read that file first for full context, then carry out the request below.\n\n{ask}",
-  "link.woke": "agent woke up in tmux {target}",
-  "link.sentTo": "sent to tmux {target}",
-  "link.title": "link agents",
-  "link.close": "Close the linking card",
-  "link.to": "to",
-  "link.context": "context",
-  "link.explain": "The agent will receive the path to this transcript with a suggestion to read the conversation. Add exactly what to ask of it:",
-  "link.placeholder": "what to do with this context…",
-  "link.askAria": "Request for the linked agent",
-  "link.linking": "linking…",
-  "link.link": "▶ Link",
-  "link.resuming": "if the agent isn't running — I'll resume its window (up to a minute)…",
+  "link.dropped": "context is in the composer of «{title}» — type the ask and send",
 
   // HandoffHandle
   "handoff.aria": "Hand the conversation to a new agent — a draft appears below",
@@ -275,6 +268,11 @@ export const en = {
   "render.codexSessionCreated": "Codex session created",
   "render.taskStarted": "Task started",
   "render.taskComplete": "Task completed",
+  "render.compacted": "context compacted",
+  "render.compactAuto": "auto",
+  "render.compactManual": "manual",
+  "render.compactPre": "{n}k tokens before",
+  "render.compactSummary": "conversation summary",
   "render.patch": "patch",
   "render.stdinSession": "stdin → session {id}",
   "render.record": "record",
@@ -388,6 +386,10 @@ export const en = {
   "scheme.zoom100": "Zoom 100% (1)",
   "scheme.zoomIn": "Zoom in (+)",
   "scheme.fit": "Fit all (0, or double-click the background)",
+  "scheme.roleImplementer": "Implementer",
+  "scheme.roleReviewer": "Reviewer",
+  "scheme.roleWorking": "working",
+  "scheme.roleWaiting": "waiting",
 
   // scheme/Minimap
   "minimap.title": "Minimap — click or drag to navigate",

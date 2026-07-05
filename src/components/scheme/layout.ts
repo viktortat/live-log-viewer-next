@@ -19,6 +19,10 @@ const GAP_Y = 130;
 const INDENT = 64;
 const GROUP_GAP = 150;
 const PAD = 100;
+/* Corridor between an implementer and its reviewer deck: wide enough for the
+   two cycle arcs and the ⟳ hub between the cards. Exported so the flow strip
+   can span the whole pair. */
+export const LOOP_GAP = 170;
 /* Quiet-branch mini cards stacked under their parent pane. */
 const MINI_W = 360;
 const MINI_H = 52;
@@ -81,7 +85,7 @@ export interface MiniStack {
   h: number;
 }
 
-/** Review-round deck of a flow, occupying one child slot under its implementer. */
+/** Review-round deck of a flow, sitting beside its implementer as the pair. */
 export interface DeckNode {
   key: string;
   flow: Flow;
@@ -92,11 +96,24 @@ export interface DeckNode {
   h: number;
 }
 
+/** Implement↔review pair on the scheme: the corridor the cycle arcs live in. */
+export interface FlowLoop {
+  key: string;
+  flow: Flow;
+  /** Right edge of the implementer card. */
+  x1: number;
+  /** Left edge of the reviewer deck. */
+  x2: number;
+  /** Shared top of the two cards. */
+  y: number;
+}
+
 export interface SchemeLayout {
   nodes: SchemeNode[];
   edges: SchemeEdge[];
   stacks: MiniStack[];
   decks: DeckNode[];
+  loops: FlowLoop[];
   drafts: DraftNode[];
   byPath: Map<string, SchemeRect>;
   width: number;
@@ -122,10 +139,9 @@ export function stackItemAt(stack: MiniStack, wy: number): FileEntry | null {
 /* Card spines under a deck's front card (mirrors RoundDeck's TAB_STEP/TAB_MAX). */
 const DECK_TAB_STEP = 30;
 const DECK_TAB_MAX = 6;
-const deckHeight = (roundCount: number) => CHILD_H + Math.min(Math.max(roundCount - 1, 0), DECK_TAB_MAX) * DECK_TAB_STEP;
-
-/* Flow states in which the reviewer side is actively doing something. */
-const DECK_LIVE_STATES = new Set<Flow["state"]>(["spawning", "reviewing", "relaying"]);
+/* The deck's front card matches its implementer's height — the pair reads as
+   two equal halves of one loop; spines extend below. */
+const deckHeight = (roundCount: number, baseH: number) => baseH + Math.min(Math.max(roundCount - 1, 0), DECK_TAB_MAX) * DECK_TAB_STEP;
 
 export function buildSchemeLayout(
   groups: BranchGroup[],
@@ -140,6 +156,7 @@ export function buildSchemeLayout(
   const edges: SchemeEdge[] = [];
   const stacks: MiniStack[] = [];
   const decks: DeckNode[] = [];
+  const loops: FlowLoop[] = [];
   const deckFor = flowByImplementer(flows);
   const claimed = claimedReviewerPaths(flows);
   let cursor = PAD;
@@ -162,12 +179,12 @@ export function buildSchemeLayout(
   /* One deck per implementer node: rounds resolve their reviewer transcripts
      through the full file list, so headless runs join as soon as the scanner
      sees them. */
-  const placeDeck = (flow: Flow, x: number, y: number): DeckNode => {
+  const placeDeck = (flow: Flow, x: number, y: number, baseH: number): DeckNode => {
     const rounds: DeckRound[] = flow.rounds.map((round) => ({
       round,
       file: round.reviewerPath ? (byAll.get(round.reviewerPath) ?? null) : null,
     }));
-    const deck: DeckNode = { key: "deck::" + flow.id, flow, rounds, x, y, w: NODE_W, h: deckHeight(flow.rounds.length) };
+    const deck: DeckNode = { key: "deck::" + flow.id, flow, rounds, x, y, w: NODE_W, h: deckHeight(flow.rounds.length, baseH) };
     decks.push(deck);
     return deck;
   };
@@ -194,6 +211,18 @@ export function buildSchemeLayout(
         h,
         isRoot: col.file.path === rootPath,
       });
+      /* The reviewer deck sits beside its implementer at the same level: the
+         two cards read as one implement↔review pair, and the LOOP_GAP corridor
+         between them carries the cycle arcs. Children drop below whichever of
+         the two cards is taller. */
+      const flow = deckFor.get(col.file.path);
+      let rowH = h;
+      if (flow) {
+        const deck = placeDeck(flow, x + NODE_W + LOOP_GAP, y, h);
+        loops.push({ key: "loop::" + flow.id, flow, x1: x + NODE_W, x2: deck.x, y });
+        rowH = Math.max(rowH, deck.h);
+      }
+      const childTop = y + rowH + GAP_Y;
       const children = childrenOf.get(col.file.path) ?? [];
       let cx = x + INDENT;
       for (const child of children) {
@@ -202,37 +231,20 @@ export function buildSchemeLayout(
           x1: x + 40,
           y1: y + h,
           x2: cx + NODE_W / 2,
-          y2: y + h + GAP_Y,
+          y2: childTop,
           color: engineColor(child.file),
           live: child.file.activity === "live",
         });
-        cx += place(child, cx, y + h + GAP_Y, depth + 1) + GAP_X;
-      }
-      /* The review deck takes the first free child slot: the loop reads as
-         "the reviewer position" right under its implementer. */
-      const flow = deckFor.get(col.file.path);
-      if (flow) {
-        const deck = placeDeck(flow, cx, y + h + GAP_Y);
-        edges.push({
-          to: deck.key,
-          x1: x + 40,
-          y1: y + h,
-          x2: cx + NODE_W / 2,
-          y2: y + h + GAP_Y,
-          color: "#5a51e0",
-          live: DECK_LIVE_STATES.has(flow.state),
-        });
-        cx += NODE_W + GAP_X;
+        cx += place(child, cx, childTop, depth + 1) + GAP_X;
       }
       const quiet = stackFor.get(col.file.path)?.filter((entry) => !claimed.has(entry.path));
       if (quiet?.length) {
-        const sy = y + h + GAP_Y;
         stacks.push({
           key: col.file.path + "::stack",
           parent: col.file.path,
           items: quiet.map(toMini),
           x: cx,
-          y: sy,
+          y: childTop,
           w: MINI_W,
           h: stackHeight(quiet.length),
         });
@@ -241,7 +253,7 @@ export function buildSchemeLayout(
           x1: x + 40,
           y1: y + h,
           x2: cx + MINI_W / 2,
-          y2: sy,
+          y2: childTop,
           color: "#9a9aa4",
           live: false,
           dashed: true,
@@ -252,14 +264,13 @@ export function buildSchemeLayout(
          not-yet-spawned agent already reads as a branch of its parent. */
       for (const id of draftsBySrc.get(col.file.path) ?? []) {
         placedDrafts.add(id);
-        const dy = y + h + GAP_Y;
-        drafts.push({ key: "draft::" + id, id, src: col.file.path, x: cx, y: dy, w: NODE_W, h: CHILD_H });
+        drafts.push({ key: "draft::" + id, id, src: col.file.path, x: cx, y: childTop, w: NODE_W, h: CHILD_H });
         edges.push({
           to: "draft::" + id,
           x1: x + 40,
           y1: y + h,
           x2: cx + NODE_W / 2,
-          y2: dy,
+          y2: childTop,
           color: "#5a51e0",
           live: false,
           dashed: true,
@@ -267,7 +278,8 @@ export function buildSchemeLayout(
         cx += NODE_W + GAP_X;
       }
       const used = cx - GAP_X - (x + INDENT);
-      return used > 0 ? Math.max(NODE_W, INDENT + used) : NODE_W;
+      const subtree = used > 0 ? Math.max(NODE_W, INDENT + used) : NODE_W;
+      return Math.max(subtree, flow ? NODE_W + LOOP_GAP + NODE_W : NODE_W);
     };
     return place(top, cursor, PAD, 0);
   };
@@ -352,6 +364,7 @@ export function buildSchemeLayout(
     edges,
     stacks,
     decks,
+    loops,
     drafts,
     byPath: new Map<string, SchemeRect>([
       ...nodes.map((node) => [node.file.path, node] as const),

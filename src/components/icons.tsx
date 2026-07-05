@@ -13,6 +13,7 @@ import {
   CircleCheck,
   ClipboardList,
   Command,
+  FoldVertical,
   Image as ImageIcon,
   type LucideIcon,
   Mail,
@@ -44,6 +45,7 @@ export {
   ChevronUp,
   CircleCheck,
   Command,
+  FoldVertical,
   ImageIcon,
   Mail,
   MessageCircle,
@@ -77,7 +79,8 @@ export type GlyphName =
   | "citation"
   | "message"
   | "shutdown"
-  | "plan";
+  | "plan"
+  | "compact";
 
 const GLYPHS: Record<GlyphName, LucideIcon> = {
   shell: ChevronRight,
@@ -92,6 +95,7 @@ const GLYPHS: Record<GlyphName, LucideIcon> = {
   message: Mail,
   shutdown: Power,
   plan: ClipboardList,
+  compact: FoldVertical,
 };
 
 export function GlyphIcon({ name, className }: { name: GlyphName; className?: string }) {

@@ -56,9 +56,11 @@ body {
   content: "";
   pointer-events: none;
   position: absolute;
-  inset: 0;
-  z-index: 40;
-  border-radius: 10px;
+  /* The comets ride the card's soft glow ring, outside the frame — inside
+     they would stack against the colored engine marker on the top edge. */
+  inset: -3px;
+  z-index: 1;
+  border-radius: 13px;
   padding: 2px;
   background: conic-gradient(
     from var(--pane-angle),
@@ -79,6 +81,15 @@ body {
   .pane-attention::before {
     animation: none;
   }
+}
+
+/* Scrollable chip rows inside pill-shaped controls (the flow strip): the
+   native scrollbar under 32px of rounded content reads as a glitch. */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
 }
 
 /* While the canvas is being dragged, decorative animations (orbiting borders,
@@ -150,6 +161,26 @@ body {
   }
   .deck-tab-live {
     animation: none;
+  }
+}
+
+/* The active leg of a review loop: dashes run along the arc in the traffic
+   direction, so the cycle visibly "flows" toward the working side. */
+@keyframes loop-dash {
+  to {
+    stroke-dashoffset: -16;
+  }
+}
+
+.loop-arc-live {
+  stroke-dasharray: 7 9;
+  animation: loop-dash 0.7s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loop-arc-live {
+    animation: none;
+    stroke-dasharray: none;
   }
 }
 

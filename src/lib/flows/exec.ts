@@ -221,7 +221,7 @@ export function startHeadlessReview(
       status: "failed",
       stdout: run.stdout,
       stderr: `${run.stderr}\n${error instanceof Error ? error.message : String(error)}`.trim(),
-      finalOutput: run.lastAgentMessage,
+      finalOutput: run.lastAgentMessage || (run.outputPath ? "" : run.stdout.trim()),
       sessionId: run.sessionId,
       code: null,
       signal: null,
@@ -235,7 +235,7 @@ export function startHeadlessReview(
     /* The artifact file is authoritative; the event stream's last agent
        message covers runs where the file never appeared. Raw stdout is JSONL
        under --json, so it is a debugging artifact, never the verdict. */
-    const captured = readOptional(run.outputPath) || run.lastAgentMessage;
+    const captured = readOptional(run.outputPath) || run.lastAgentMessage || (run.outputPath ? "" : run.stdout.trim());
     if (run.stderr.trim()) atomicWriteText(stderrPathFor(flowId, round), run.stderr);
     run.result = {
       status: timedOut ? "timeout" : code === 0 ? "done" : "failed",

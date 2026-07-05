@@ -11,8 +11,18 @@ import type { FileEntry } from "@/lib/types";
 import { BranchPane, kindLabel } from "@/components/BranchPane";
 import { DraftAgentPane } from "@/components/DraftAgentPane";
 import { FlowDialog } from "@/components/flows/FlowDialog";
-import { canStartFlow, flowByImplementer, VERDICT_GLYPHS, verdictTone } from "@/components/flows/flowModel";
+import {
+  activeLoopLeg,
+  activeLoopRole,
+  ATTENTION_STATES,
+  BUSY_FLOW_STATES,
+  canStartFlow,
+  flowByImplementer,
+  VERDICT_GLYPHS,
+  verdictTone,
+} from "@/components/flows/flowModel";
 import { FlowStrip } from "@/components/flows/FlowStrip";
+import { RoleTag } from "@/components/flows/RoleTag";
 import { RoundDeck } from "@/components/flows/RoundDeck";
 import { canHandoff, HandoffHandle } from "@/components/HandoffHandle";
 import type { BranchGroup } from "@/components/projectModel";
@@ -20,9 +30,12 @@ import { activityDot, cleanTitle, engineBadge, engineEdge, fmtAge } from "@/comp
 
 import {
   buildSchemeLayout,
+  LOOP_GAP,
+  NODE_W,
   stackItemAt,
   type DeckNode,
   type DraftNode,
+  type FlowLoop,
   type MiniStack,
   type SchemeEdge,
   type SchemeLayout,
@@ -122,6 +135,92 @@ const EdgesLayer = memo(function EdgesLayer({ edges, width, height }: { edges: S
   );
 });
 
+/* Vertical anchors of the cycle arcs inside a loop corridor, relative to the
+   pair's top edge — high enough to sit next to both cards' headers. */
+const LOOP_ARC_TOP = 150;
+const LOOP_ARC_BOT = 330;
+/* How far the arcs bulge out of the corridor and how far the control points
+   reach along it: together they round the two legs into an ellipse-ish ring. */
+const LOOP_BULGE = 56;
+const LOOP_REACH = 52;
+
+/** Hub color of a loop: green while a side works, amber when it waits on the
+    user, verdict green once approved, gray otherwise. */
+function loopTone(flow: FlowLoop["flow"]): string {
+  if (flow.state === "approved") return "#1a8a3e";
+  if (BUSY_FLOW_STATES.has(flow.state)) return "#5a51e0";
+  if (ATTENTION_STATES.has(flow.state)) return "#e0ae45";
+  return "#9a9aa4";
+}
+
+/* The implement↔review pair drawn as an explicit cycle: a forward arc into
+   the reviewer, a return arc back into the implementer, and a ⟳ hub between
+   them. The leg traffic is currently on runs an animated dash in its travel
+   direction; the other leg stays quiet. Geometry transitions mirror
+   EdgesLayer so layout reshuffles glide. */
+const LoopsLayer = memo(function LoopsLayer({ loops, width, height }: { loops: FlowLoop[]; width: number; height: number }) {
+  if (!loops.length) return null;
+  return (
+    <svg width={width} height={height} className="absolute left-0 top-0" aria-hidden>
+      {loops.map((loop) => {
+        const leg = activeLoopLeg(loop.flow);
+        const tone = loopTone(loop.flow);
+        const yTop = loop.y + LOOP_ARC_TOP;
+        const yBot = loop.y + LOOP_ARC_BOT;
+        const midX = (loop.x1 + loop.x2) / 2;
+        const midY = (yTop + yBot) / 2;
+        const forward = `M ${loop.x1} ${yTop} C ${loop.x1 + LOOP_REACH} ${yTop - LOOP_BULGE}, ${loop.x2 - LOOP_REACH} ${
+          yTop - LOOP_BULGE
+        }, ${loop.x2 - 7} ${yTop}`;
+        const back = `M ${loop.x2} ${yBot} C ${loop.x2 - LOOP_REACH} ${yBot + LOOP_BULGE}, ${loop.x1 + LOOP_REACH} ${
+          yBot + LOOP_BULGE
+        }, ${loop.x1 + 7} ${yBot}`;
+        const forwardHead = `M ${loop.x2 - 9} ${yTop - 5} L ${loop.x2 - 9} ${yTop + 5} L ${loop.x2 - 1} ${yTop} Z`;
+        const backHead = `M ${loop.x1 + 9} ${yBot - 5} L ${loop.x1 + 9} ${yBot + 5} L ${loop.x1 + 1} ${yBot} Z`;
+        const arc = (d: string, live: boolean) => ({
+          d,
+          fill: "none" as const,
+          stroke: live ? "#5a51e0" : "#c9c9d1",
+          strokeWidth: live ? 3 : 2.5,
+          strokeLinecap: "round" as const,
+          className: live ? "loop-arc-live" : undefined,
+          style: { d: `path("${d}")`, transition: `d ${MOVE_MS}ms ${MOVE_EASE}` } as React.CSSProperties,
+        });
+        const headStyle = (d: string) =>
+          ({ d: `path("${d}")`, transition: `d ${MOVE_MS}ms ${MOVE_EASE}` }) as React.CSSProperties;
+        return (
+          <g key={loop.key}>
+            <path {...arc(forward, leg === "forward")} />
+            <path d={forwardHead} style={headStyle(forwardHead)} fill={leg === "forward" ? "#5a51e0" : "#c9c9d1"} />
+            <path {...arc(back, leg === "back")} />
+            <path d={backHead} style={headStyle(backHead)} fill={leg === "back" ? "#5a51e0" : "#c9c9d1"} />
+            <circle
+              cx={midX}
+              cy={midY}
+              r={17}
+              fill="#ffffff"
+              stroke={tone}
+              strokeWidth={2}
+              style={{ cx: `${midX}px`, cy: `${midY}px`, transition: `cx ${MOVE_MS}ms ${MOVE_EASE}, cy ${MOVE_MS}ms ${MOVE_EASE}` } as React.CSSProperties}
+            />
+            <text
+              x={midX}
+              y={midY + 6}
+              textAnchor="middle"
+              fontSize={17}
+              fontWeight={700}
+              fill={tone}
+              style={{ x: `${midX}px`, y: `${midY + 6}px`, transition: `x ${MOVE_MS}ms ${MOVE_EASE}, y ${MOVE_MS}ms ${MOVE_EASE}` } as React.CSSProperties}
+            >
+              ⟳
+            </text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+});
+
 /** Quiet history chip inside an expanded under-deck panel. */
 function UnderRow({ file, onSelect }: { file: FileEntry; onSelect: (file: FileEntry) => void }) {
   const badge = engineBadge(file);
@@ -172,6 +271,10 @@ function FarLabel({ file }: { file: FileEntry }) {
 
 const liteNoop = () => undefined;
 
+/* The flow strip spans the whole implementer↔reviewer pair, not just the
+   implementer's card — it is the loop's shared header. */
+const PAIR_W = NODE_W * 2 + LOOP_GAP;
+
 /* Map mode (the phone's full-screen overlay) draws every conversation as a
    static identity card. A full pane per node would run a polling LogFeed and
    hold thousands of transcript lines each — multiplied across the project it
@@ -187,7 +290,7 @@ function LiteNodeShell({ node, ringed, flow }: { node: SchemeNode; ringed: boole
       style={{ transform: `translate(${node.x}px, ${node.y}px)`, width: node.w, height: node.h, transition: MOVE_TRANSITION }}
     >
       {flow ? (
-        <div className="absolute inset-x-0 -top-10 z-[4] flex justify-center">
+        <div className="absolute inset-x-0 -top-12 z-[4] flex justify-center">
           <FlowStrip flow={flow} onFocusRound={liteNoop} />
         </div>
       ) : null}
@@ -199,7 +302,7 @@ function LiteNodeShell({ node, ringed, flow }: { node: SchemeNode; ringed: boole
       ) : null}
       <div
         className={`relative z-[1] flex h-full min-w-0 flex-col overflow-hidden rounded-[10px] border border-t-4 bg-panel shadow-card ${
-          ringed ? "ring-2 ring-accent/60" : ""
+          ringed ? "ring-2 ring-accent/60 ring-offset-2 ring-offset-bg" : ""
         }`}
         style={engineEdge(node.file)}
       >
@@ -220,6 +323,7 @@ function LiteNodeShell({ node, ringed, flow }: { node: SchemeNode; ringed: boole
           </div>
         ) : null}
       </div>
+      {flow ? <RoleTag role="implementer" active={activeLoopRole(flow) === "implementer"} /> : null}
       <FarLabel file={node.file} />
     </div>
   );
@@ -236,7 +340,7 @@ function LiteDraftShell({ draft, ringed }: { draft: DraftNode; ringed: boolean }
     >
       <div
         className={`flex h-full items-center justify-center rounded-[10px] border border-dashed border-line bg-panel/70 ${
-          ringed ? "ring-2 ring-accent/60" : ""
+          ringed ? "ring-2 ring-accent/60 ring-offset-2 ring-offset-bg" : ""
         }`}
       >
         <span className="flex items-center gap-1.5 text-[13px] font-semibold text-dim">
@@ -288,6 +392,7 @@ function LiteDeckShell({ deck }: { deck: DeckNode }) {
           <div className="flex flex-1 items-center justify-center text-[12px] font-semibold text-dim">{t("roundDeck.waitingFirst")}</div>
         )}
       </div>
+      <RoleTag role="reviewer" active={activeLoopRole(deck.flow) === "reviewer"} />
     </div>
   );
 }
@@ -369,11 +474,11 @@ function NodeShell({
     >
       {/* The loop strip hovers above its implementer's card. */}
       {flow ? (
-        <div className="absolute inset-x-0 -top-10 z-[4] flex justify-center">
+        <div className="absolute inset-x-0 -top-12 z-[4] flex justify-center">
           <FlowStrip flow={flow} onFocusRound={(round) => onFocusRound(flow.id, round)} />
         </div>
       ) : canFlow ? (
-        <div className="absolute -top-10 left-0 z-[4]">
+        <div className="absolute -top-11 left-0 z-[4]">
           <button
             data-scheme-ui
             className="inline-flex h-7 items-center gap-1 rounded-full border border-line bg-panel px-2.5 text-[11px] font-semibold text-dim shadow-card hover:border-accent/45 hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
@@ -398,7 +503,7 @@ function NodeShell({
           <div className="absolute inset-x-2 -bottom-2 h-5 rounded-[10px] border border-line bg-panel/90 shadow-card" aria-hidden />
         </>
       ) : null}
-      <div className={`relative z-[1] flex h-full ${ringed ? "rounded-[10px] ring-2 ring-accent/60" : ""}`}>
+      <div className={`relative z-[1] flex h-full ${ringed ? "rounded-[10px] ring-2 ring-accent/60 ring-offset-2 ring-offset-bg" : ""}`}>
         <BranchPane
           file={node.file}
           tasks={node.tasks}
@@ -408,6 +513,7 @@ function NodeShell({
           onClose={() => onClose(node.file.path)}
         />
       </div>
+      {flow ? <RoleTag role="implementer" active={activeLoopRole(flow) === "implementer"} /> : null}
       <FarLabel file={node.file} />
       {/* The handoff handle pinned outside the card's bottom-left corner —
           where child arrows start; a click hangs a draft conversation below. */}
@@ -457,7 +563,7 @@ function DraftShell({
       className="scheme-enter absolute"
       style={{ transform: `translate(${draft.x}px, ${draft.y}px)`, width: draft.w, height: draft.h, transition: MOVE_TRANSITION }}
     >
-      <div className={`flex h-full ${ringed ? "rounded-[10px] ring-2 ring-accent/60" : ""}`}>
+      <div className={`flex h-full ${ringed ? "rounded-[10px] ring-2 ring-accent/60 ring-offset-2 ring-offset-bg" : ""}`}>
         <DraftAgentPane
           draftId={draft.id}
           project={project}
@@ -490,6 +596,7 @@ function DeckShell({
       style={{ transform: `translate(${deck.x}px, ${deck.y}px)`, width: deck.w, height: deck.h, transition: MOVE_TRANSITION }}
     >
       <RoundDeck flow={deck.flow} rounds={deck.rounds} files={files} onSelect={onSelect} focusRound={focusRound} />
+      <RoleTag role="reviewer" active={activeLoopRole(deck.flow) === "reviewer"} />
     </div>
   );
 }
@@ -1088,12 +1195,7 @@ export function SchemeBoard({
     }
     for (const deck of layout.decks) {
       if (!hit(deck)) continue;
-      /* The front card of a deck is its latest round with a transcript. */
-      for (let i = deck.rounds.length - 1; i >= 0; i--) {
-        const file = deck.rounds[i]?.file;
-        if (file) return file.path;
-      }
-      return null;
+      return deck.key;
     }
     return null;
   };
@@ -1159,6 +1261,7 @@ export function SchemeBoard({
         }
       >
         <EdgesLayer edges={layout.edges} width={layout.width} height={layout.height} />
+        <LoopsLayer loops={layout.loops} width={layout.width} height={layout.height} />
         <NodesLayer
           layout={layout}
           project={project}

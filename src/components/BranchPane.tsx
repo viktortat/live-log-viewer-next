@@ -68,103 +68,109 @@ export function BranchPane({ file, files, tasks, onSelect, isRoot, onClose, drag
   }, [file.path]);
   /* Link-arrow drop target; re-registers each poll so the pid stays current. */
   useEffect(() => {
+    if (noComposer) return;
     if (paneRef.current) return registerLinkTarget(file, paneRef.current);
-  }, [file]);
+  }, [file, noComposer]);
   return (
-    <section
-      ref={paneRef}
-      /* Text inside the column must stay selectable: the canvas drag-pan skips
-         presses that start here (wheel pan still covers scrolling). */
-      data-pan-ignore
-      data-link-path={file.path}
-      className={`relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[10px] border bg-panel shadow-card ${
-        isRoot ? "border-t-4" : "border-t-2"
-      } ${tone.section} ${tone.glow ? "pane-attention" : ""}`}
-      style={{
-        ...(state === "done" ? { borderTopColor: "#c9c9d1" } : engineEdge(file)),
-        ...(tone.glow ? ({ "--pane-glow": tone.glow } as React.CSSProperties) : null),
-      }}
+    /* The attention comets orbit outside the card frame, so they live on an
+       unclipped wrapper — inside the section they would stack against the
+       colored engine marker and get cut by its overflow-hidden. */
+    <div
+      className={`relative flex min-h-0 min-w-0 flex-1 ${tone.glow ? "pane-attention" : ""}`}
+      style={tone.glow ? ({ "--pane-glow": tone.glow } as React.CSSProperties) : undefined}
     >
-      <header
-        className={`flex h-10 shrink-0 items-center gap-1.5 border-b border-line px-2.5 ${tone.header} ${
-          dragHandle ? "cursor-grab active:cursor-grabbing" : ""
-        }`}
-        {...dragHandle}
+      <section
+        ref={paneRef}
+        /* Text inside the column must stay selectable: the canvas drag-pan skips
+           presses that start here (wheel pan still covers scrolling). */
+        data-pan-ignore
+        data-link-path={file.path}
+        className={`relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[10px] border bg-panel shadow-card ${
+          isRoot ? "border-t-4" : "border-t-2"
+        } ${tone.section}`}
+        style={state === "done" ? { borderTopColor: "#c9c9d1" } : engineEdge(file)}
       >
-        <span className={`h-2 w-2 shrink-0 rounded-full ${activityDot(file.activity)}`} title={t(`branch.${state}`)} />
-        {/* One identity chip: the model when known (engine lives in the tint
-            and the tooltip), the engine label as fallback. */}
-        {file.model ? (
-          <span
-            className="shrink-0 rounded-full px-1.5 py-0.5 font-mono text-[9.5px] font-semibold"
-            style={{ backgroundColor: effortTint(file).soft, color: effortTint(file).color }}
-            title={[badge.label, effortTitle(file)].filter(Boolean).join(" · ")}
-          >
-            {file.model}
+        <header
+          className={`flex h-10 shrink-0 items-center gap-1.5 border-b border-line px-2.5 ${tone.header} ${
+            dragHandle ? "cursor-grab active:cursor-grabbing" : ""
+          }`}
+          {...dragHandle}
+        >
+          <span className={`h-2 w-2 shrink-0 rounded-full ${activityDot(file.activity)}`} title={t(`branch.${state}`)} />
+          {/* One identity chip: the model when known (engine lives in the tint
+              and the tooltip), the engine label as fallback. */}
+          {file.model ? (
+            <span
+              className="shrink-0 rounded-full px-1.5 py-0.5 font-mono text-[9.5px] font-semibold"
+              style={{ backgroundColor: effortTint(file).soft, color: effortTint(file).color }}
+              title={[badge.label, effortTitle(file)].filter(Boolean).join(" · ")}
+            >
+              {file.model}
+            </span>
+          ) : (
+            <span className="inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[10px] font-bold" style={badge.style}>
+              {badge.label}
+            </span>
+          )}
+          {file.ctx ? <CtxChip ctx={file.ctx} /> : null}
+          {file.worktree ? (
+            <span
+              className="inline-flex shrink-0 items-center gap-0.5 rounded-full border border-line/80 px-1.5 py-0.5 font-mono text-[9.5px] text-dim"
+              title={t("branch.worktree", { name: file.worktree })}
+            >
+              <GitBranch className="h-2.5 w-2.5" aria-hidden /> {file.worktree}
+            </span>
+          ) : null}
+          {file.plan ? <PlanChip plan={file.plan} /> : null}
+          {file.goal ? <GoalChip goal={file.goal} /> : null}
+          {isRoot ? null : (
+            <span
+              className="inline-flex shrink-0 items-center gap-0.5 text-[10px] text-dim"
+              title={file.handoff ? t("branch.handoffTitle") : t("branch.branchTitle")}
+            >
+              <CornerDownRight className="h-3 w-3" aria-hidden /> {file.handoff ? t("kind.handoff") : kindLabel(t, file.kind)}
+            </span>
+          )}
+          <span className="min-w-0 flex-1 truncate text-[12px] font-semibold" title={cleanTitle(file.title)}>
+            {cleanTitle(file.title, 90)}
           </span>
-        ) : (
-          <span className="inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[10px] font-bold" style={badge.style}>
-            {badge.label}
-          </span>
-        )}
-        {file.ctx ? <CtxChip ctx={file.ctx} /> : null}
-        {file.worktree ? (
-          <span
-            className="inline-flex shrink-0 items-center gap-0.5 rounded-full border border-line/80 px-1.5 py-0.5 font-mono text-[9.5px] text-dim"
-            title={t("branch.worktree", { name: file.worktree })}
-          >
-            <GitBranch className="h-2.5 w-2.5" aria-hidden /> {file.worktree}
-          </span>
+          <ProcessStatusControls file={file} compact />
+          <DeleteFileButton file={file} onDeleted={onClose} />
+          {onClose ? (
+            <button
+              className="inline-flex shrink-0 items-center rounded-[8px] border border-line bg-bg px-1.5 py-0.5 text-dim hover:border-err/40 hover:text-err focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+              aria-label={t("branch.removeColumn", { title: cleanTitle(file.title, 60) })}
+              onClick={onClose}
+            >
+              <X className="h-3 w-3" aria-hidden />
+            </button>
+          ) : null}
+        </header>
+        {banner ?? null}
+        {tasks.length ? (
+          <FlipRow className="shrink-0 border-b border-line bg-[#fbfbfd]" enter="fade">
+            {tasks.map((task) => (
+              <div key={task.path} data-flip-key={task.path}>
+                <TaskStrip file={task} files={files} onSelect={onSelect} />
+              </div>
+            ))}
+          </FlipRow>
         ) : null}
-        {file.plan ? <PlanChip plan={file.plan} /> : null}
-        {file.goal ? <GoalChip goal={file.goal} /> : null}
-        {isRoot ? null : (
-          <span
-            className="inline-flex shrink-0 items-center gap-0.5 text-[10px] text-dim"
-            title={file.handoff ? t("branch.handoffTitle") : t("branch.branchTitle")}
-          >
-            <CornerDownRight className="h-3 w-3" aria-hidden /> {file.handoff ? t("kind.handoff") : kindLabel(t, file.kind)}
-          </span>
-        )}
-        <span className="min-w-0 flex-1 truncate text-[12px] font-semibold" title={cleanTitle(file.title)}>
-          {cleanTitle(file.title, 90)}
-        </span>
-        <ProcessStatusControls file={file} compact />
-        <DeleteFileButton file={file} onDeleted={onClose} />
-        {onClose ? (
-          <button
-            className="inline-flex shrink-0 items-center rounded-[8px] border border-line bg-bg px-1.5 py-0.5 text-dim hover:border-err/40 hover:text-err focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-            aria-label={t("branch.removeColumn", { title: cleanTitle(file.title, 60) })}
-            onClick={onClose}
-          >
-            <X className="h-3 w-3" aria-hidden />
-          </button>
-        ) : null}
-      </header>
-      {banner ?? null}
-      {tasks.length ? (
-        <FlipRow className="shrink-0 border-b border-line bg-[#fbfbfd]" enter="fade">
-          {tasks.map((task) => (
-            <div key={task.path} data-flip-key={task.path}>
-              <TaskStrip file={task} files={files} onSelect={onSelect} />
-            </div>
-          ))}
-        </FlipRow>
-      ) : null}
-      <LogFeed
-        file={file}
-        files={files}
-        onSelect={onSelect}
-        showSvc={false}
-        lineFilter=""
-        onStatus={noop}
-        paused={false}
-        follow
-        setFollow={noop}
-        compact
-      />
-      {noComposer ? null : <TmuxComposer file={file} />}
-    </section>
+        <LogFeed
+          file={file}
+          files={files}
+          onSelect={onSelect}
+          showSvc={false}
+          lineFilter=""
+          onStatus={noop}
+          paused={false}
+          follow
+          setFollow={noop}
+          compact
+        />
+        {noComposer ? null : <TmuxComposer file={file} />}
+      </section>
+    </div>
   );
 }
 

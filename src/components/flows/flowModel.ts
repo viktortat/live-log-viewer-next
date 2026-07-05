@@ -1,5 +1,5 @@
 import { getLocale, type TFunction, translate } from "@/lib/i18n";
-import type { Flow, FlowAction, FlowState, ReviewVerdict } from "@/lib/flows/types";
+import type { Flow, FlowAction, FlowRoleKey, FlowState, ReviewVerdict } from "@/lib/flows/types";
 import type { FileEntry } from "@/lib/types";
 
 import { isConversation } from "@/components/projectModel";
@@ -55,6 +55,24 @@ export const ATTENTION_STATES: ReadonlySet<FlowState> = new Set([
   "paused",
   "approved",
 ]);
+
+/** Flow states in which one of the loop sides is visibly doing work. */
+export const BUSY_FLOW_STATES: ReadonlySet<FlowState> = new Set(["spawning", "reviewing", "relaying", "fixing"]);
+
+/** The loop side working right now — drives the role tags on the scheme. */
+export function activeLoopRole(flow: Flow): FlowRoleKey | null {
+  if (flow.state === "spawning" || flow.state === "reviewing") return "reviewer";
+  if (flow.state === "waiting_ready" || flow.state === "relaying" || flow.state === "fixing") return "implementer";
+  return null;
+}
+
+/** The cycle leg traffic is on: forward = implementer → reviewer. */
+export function activeLoopLeg(flow: Flow): "forward" | "back" | null {
+  if (flow.state === "spawn_pending" || flow.state === "spawning" || flow.state === "reviewing") return "forward";
+  if (flow.state === "relay_pending" || flow.state === "relaying" || flow.state === "fixing") return "back";
+  if (flow.state === "waiting_ready") return flow.rounds.length ? "back" : null;
+  return null;
+}
 
 export const VERDICT_GLYPHS: Record<ReviewVerdict, string> = {
   APPROVE: "✓",

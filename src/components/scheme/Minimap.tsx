@@ -84,6 +84,9 @@ export function Minimap({
           {layout.drafts.map((draft) => (
             <rect key={draft.key} x={draft.x} y={draft.y} width={draft.w} height={draft.h} rx={18} fill="#9a9aa4" opacity={0.3} />
           ))}
+          {layout.decks.map((deck) => (
+            <rect key={deck.key} x={deck.x} y={deck.y} width={deck.w} height={deck.h} rx={18} fill="#5a51e0" opacity={0.3} />
+          ))}
           {layout.nodes.map((node) => (
             <rect
               key={node.file.path}

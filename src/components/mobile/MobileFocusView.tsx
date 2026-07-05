@@ -9,6 +9,7 @@ import type { FileEntry } from "@/lib/types";
 
 import { BranchPane } from "@/components/BranchPane";
 import { DraftAgentPane } from "@/components/DraftAgentPane";
+import { RoundDeck } from "@/components/flows/RoundDeck";
 import { canHandoff, HandoffHandle } from "@/components/HandoffHandle";
 import { paneState, type PaneState } from "@/components/paneState";
 import type { BranchGroup } from "@/components/projectModel";
@@ -30,6 +31,7 @@ interface Entry {
   key: string;
   file: FileEntry | null;
   isRoot: boolean;
+  kind: "node" | "draft" | "deck";
 }
 
 interface Props {
@@ -68,8 +70,9 @@ export function MobileFocusView({ project, groups, manual, files, flows, drafts,
      so chips and the map agree on what "next" means. */
   const entries = useMemo<Entry[]>(
     () => [
-      ...layout.nodes.map((node) => ({ key: node.file.path, file: node.file, isRoot: node.isRoot })),
-      ...layout.drafts.map((draft) => ({ key: draft.key, file: null, isRoot: true })),
+      ...layout.nodes.map((node) => ({ key: node.file.path, file: node.file, isRoot: node.isRoot, kind: "node" as const })),
+      ...layout.decks.map((deck) => ({ key: deck.key, file: null, isRoot: false, kind: "deck" as const })),
+      ...layout.drafts.map((draft) => ({ key: draft.key, file: null, isRoot: true, kind: "draft" as const })),
     ],
     [layout],
   );
@@ -120,6 +123,7 @@ export function MobileFocusView({ project, groups, manual, files, flows, drafts,
   }, [resolvedKey]);
 
   const activeNode = useMemo(() => layout.nodes.find((node) => node.file.path === resolvedKey) ?? null, [layout, resolvedKey]);
+  const activeDeck = useMemo(() => layout.decks.find((deck) => deck.key === resolvedKey) ?? null, [layout, resolvedKey]);
   const activeDraft = useMemo(() => layout.drafts.find((draft) => draft.key === resolvedKey) ?? null, [layout, resolvedKey]);
 
   const step = useCallback(
@@ -197,6 +201,10 @@ export function MobileFocusView({ project, groups, manual, files, flows, drafts,
             />
             {onHandoff && canHandoff(activeNode.file) ? <HandoffHandle file={activeNode.file} onHandoff={() => onHandoff(activeNode.file)} /> : null}
           </div>
+        ) : activeDeck ? (
+          <div key={activeDeck.key} className="relative min-h-0 flex-1">
+            <RoundDeck flow={activeDeck.flow} rounds={activeDeck.rounds} files={files} onSelect={onSelect} focusRound={null} />
+          </div>
         ) : activeDraft ? (
           <DraftAgentPane
             key={activeDraft.key}
@@ -265,6 +273,7 @@ function StripChip({
 }) {
   const { t } = useLocale();
   if (!entry.file) {
+    const deck = entry.kind === "deck";
     return (
       <button
         ref={chipRef}
@@ -274,7 +283,7 @@ function StripChip({
         }`}
         onClick={onClick}
       >
-        <span className="text-[13px] leading-none text-accent">＋</span> {t("mobile.agent")}
+        <span className="text-[13px] leading-none text-accent">{deck ? "R" : "＋"}</span> {deck ? t("scheme.flow") : t("mobile.agent")}
       </button>
     );
   }
@@ -340,6 +349,20 @@ function MapChip({ layout, current, onOpen }: { layout: SchemeLayout; current: s
               opacity={0.3}
               stroke={draft.key === current ? "#5a51e0" : undefined}
               strokeWidth={draft.key === current ? 5 / scale : undefined}
+            />
+          ))}
+          {layout.decks.map((deck) => (
+            <rect
+              key={deck.key}
+              x={deck.x}
+              y={deck.y}
+              width={deck.w}
+              height={deck.h}
+              rx={24}
+              fill="#5a51e0"
+              opacity={0.35}
+              stroke={deck.key === current ? "#5a51e0" : undefined}
+              strokeWidth={deck.key === current ? 5 / scale : undefined}
             />
           ))}
           {layout.nodes.map((node) => (

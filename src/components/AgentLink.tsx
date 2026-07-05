@@ -4,21 +4,19 @@ import { Link2 } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
-import { X } from "@/components/icons";
 import { useLocale } from "@/lib/i18n";
 import type { FileEntry } from "@/lib/types";
 
-import { cleanTitle, engineBadge } from "./utils";
+import { appendComposerDraft } from "./TmuxComposer";
+import { cleanTitle } from "./utils";
 
 /** Accent of the agent-link gesture: the arrow, the target border highlight
-    (see the [data-link-hover] rule in globals.css) and the send button. */
+    (see the [data-link-hover] rule in globals.css) and the drop chip. */
 const LINK_COLOR = "#0d9488";
 /** Pointer travel that turns a pill press into a link drag instead of a click. */
 const DRAG_THRESHOLD = 7;
-const CARD_W = 340;
-const CARD_MARGIN = 8;
-/** Rough card height reserved when clamping it to the bottom viewport edge. */
-const CARD_RESERVE = 320;
+/** How long the arrow and its confirmation chip linger after a drop. */
+const FLASH_MS = 1600;
 
 interface LinkTarget {
   el: HTMLElement;
@@ -75,14 +73,16 @@ interface DropState {
 
 /**
  * Drag-to-link gesture off the handoff pill: pull an arrow onto another
- * agent's pane (its border lights up in the link color while hovered) and a
- * drop opens a card that sends that agent this conversation's transcript path
- * plus a user-written ask, through the existing /api/tmux delivery.
+ * agent's pane (its border lights up in the link color while hovered) and the
+ * drop itself makes the connection — the handoff context (this conversation's
+ * title and transcript path) lands straight in the target pane's composer,
+ * focused and ready for the ask. No intermediate card.
  *
  * The arrow follows the cursor via direct `d` writes on the SVG path — no
  * React state per move — matching how the pill itself tracks the pointer.
  */
 export function useAgentLink(source: FileEntry, onDragStart?: () => void) {
+  const { t } = useLocale();
   const [dragging, setDragging] = useState(false);
   const [anchor, setAnchor] = useState<{ x: number; y: number } | null>(null);
   const [drop, setDrop] = useState<DropState | null>(null);
@@ -144,7 +144,13 @@ export function useAgentLink(source: FileEntry, onDragStart?: () => void) {
       if (!st?.active) return;
       setDragging(false);
       if (st.hover) {
-        /* The target keeps its highlight while the ask card is open. */
+        /* The drop is the delivery: the handoff context goes into the target
+           pane's composer draft right away, focused for the ask. The arrow
+           and the target highlight linger through the confirmation flash. */
+        appendComposerDraft(
+          st.hover.file.path,
+          t("link.handoffContext", { title: cleanTitle(source.title, 80), path: source.path, ask: "" }).trimEnd() + "\n\n",
+        );
         setDrop({
           file: st.hover.file,
           from: { x: st.anchorX, y: st.anchorY },
@@ -183,10 +189,15 @@ export function useAgentLink(source: FileEntry, onDragStart?: () => void) {
     return suppressed;
   };
 
-  const closeDrop = () => {
-    clearHighlight();
-    setDrop(null);
-  };
+  /* The confirmation lingers just long enough to read, then tidies up. */
+  useEffect(() => {
+    if (!drop) return;
+    const timer = window.setTimeout(() => {
+      clearHighlight();
+      setDrop(null);
+    }, FLASH_MS);
+    return () => window.clearTimeout(timer);
+  }, [drop]);
 
   const overlay =
     dragging || drop
@@ -215,7 +226,7 @@ export function useAgentLink(source: FileEntry, onDragStart?: () => void) {
               />
               <circle cx={drop ? drop.from.x : (anchor?.x ?? 0)} cy={drop ? drop.from.y : (anchor?.y ?? 0)} r={4} fill={LINK_COLOR} />
             </svg>
-            {drop ? <LinkAskCard key={drop.file.path} source={source} drop={drop} onClose={closeDrop} /> : null}
+            {drop ? <DropFlash drop={drop} /> : null}
           </div>,
           document.body,
         )
@@ -225,134 +236,21 @@ export function useAgentLink(source: FileEntry, onDragStart?: () => void) {
 }
 
 /**
- * The ask card at the drop point: shows who receives the link, what context
- * they get, and requires a written ask before sending. Delivery goes through
- * POST /api/tmux — a live pane gets the text pasted in, a finished
- * conversation is resumed in a fresh tmux window first.
+ * The confirmation chip at the drop point: the context is already sitting in
+ * the target's composer, so this only says where it landed before the overlay
+ * fades on the hook's timer.
  */
-function LinkAskCard({ source, drop, onClose }: { source: FileEntry; drop: DropState; onClose: () => void }) {
+function DropFlash({ drop }: { drop: DropState }) {
   const { t } = useLocale();
-  const cardRef = useRef<HTMLDivElement>(null);
-  const [ask, setAsk] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
-  const target = drop.file;
-  const badge = engineBadge(target);
-
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    const onDown = (event: PointerEvent) => {
-      if (cardRef.current && !cardRef.current.contains(event.target as Node)) onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    window.addEventListener("pointerdown", onDown);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener("pointerdown", onDown);
-    };
-  }, [onClose]);
-
-  /* A confirmed delivery lingers just long enough to read, then tidies up. */
-  useEffect(() => {
-    if (status?.kind !== "ok") return;
-    const timer = window.setTimeout(onClose, 1800);
-    return () => window.clearTimeout(timer);
-  }, [status, onClose]);
-
-  const left = Math.max(CARD_MARGIN, Math.min(drop.to.x + 14, window.innerWidth - CARD_W - CARD_MARGIN));
-  const top = Math.max(CARD_MARGIN, Math.min(drop.to.y + 12, window.innerHeight - CARD_RESERVE));
-
-  const send = async () => {
-    if (busy || !ask.trim()) return;
-    setBusy(true);
-    setStatus(null);
-    const text = t("link.handoffContext", { title: cleanTitle(source.title, 80), path: source.path, ask: ask.trim() });
-    try {
-      const res = await fetch("/api/tmux", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ ...(target.pid !== null ? { pid: target.pid } : {}), path: target.path, text }),
-      });
-      const json = (await res.json()) as { ok?: boolean; target?: string; spawned?: boolean; error?: string };
-      if (!res.ok || !json.ok) {
-        setStatus({ kind: "err", text: json.error ?? t("common.failedSend") });
-        return;
-      }
-      setStatus({
-        kind: "ok",
-        text: json.spawned ? t("link.woke", { target: json.target ?? "" }) : t("link.sentTo", { target: json.target ?? "" }),
-      });
-    } catch {
-      setStatus({ kind: "err", text: t("common.serverUnavailable") });
-    } finally {
-      setBusy(false);
-    }
-  };
-
+  const left = Math.max(8, Math.min(drop.to.x + 14, window.innerWidth - 288));
+  const top = Math.max(8, Math.min(drop.to.y + 12, window.innerHeight - 44));
   return (
     <div
-      ref={cardRef}
-      className="pointer-events-auto fixed flex w-[340px] cursor-default flex-col gap-2.5 rounded-[12px] border border-line bg-panel p-3 shadow-[0_8px_28px_rgba(20,20,30,0.14)]"
-      style={{ left, top }}
+      className="fixed flex max-w-[280px] items-center gap-1.5 rounded-full px-3 py-1.5 text-[11.5px] font-semibold text-white shadow-card"
+      style={{ left, top, backgroundColor: LINK_COLOR }}
     >
-      <div className="flex items-center gap-1.5">
-        <Link2 className="h-3.5 w-3.5 shrink-0" style={{ color: LINK_COLOR }} aria-hidden />
-        <span className="min-w-0 flex-1 truncate text-[12px] font-bold">{t("link.title")}</span>
-        <button
-          type="button"
-          aria-label={t("link.close")}
-          onClick={onClose}
-          className="inline-flex shrink-0 items-center rounded-[8px] border border-line bg-bg px-1.5 py-0.5 text-dim hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-        >
-          <X className="h-3 w-3" aria-hidden />
-        </button>
-      </div>
-      <div className="flex flex-col gap-1.5 rounded-[8px] border border-line bg-bg px-2 py-2">
-        <div className="flex min-w-0 items-center gap-1.5">
-          <span className="w-[64px] shrink-0 text-[10px] font-semibold text-dim">{t("link.to")}</span>
-          <span className="shrink-0 rounded-full px-1.5 py-0.5 text-[9.5px] font-bold" style={badge.style}>
-            {badge.label}
-          </span>
-          <span className="min-w-0 flex-1 truncate text-[10.5px] font-semibold" title={cleanTitle(target.title)}>
-            {cleanTitle(target.title, 60)}
-          </span>
-        </div>
-        <div className="flex min-w-0 items-center gap-1.5">
-          <span className="w-[64px] shrink-0 text-[10px] font-semibold text-dim">{t("link.context")}</span>
-          <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-ink" title={source.path}>
-            {source.path}
-          </span>
-        </div>
-      </div>
-      <p className="text-[10.5px] text-dim">
-        {t("link.explain")}
-      </p>
-      <textarea
-        value={ask}
-        onChange={(event) => setAsk(event.target.value)}
-        rows={4}
-        autoFocus
-        placeholder={t("link.placeholder")}
-        aria-label={t("link.askAria")}
-        className="resize-y rounded-[8px] border border-line bg-bg px-2 py-1.5 text-[12px] text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-      />
-      <div className="flex items-center">
-        <button
-          type="button"
-          disabled={busy || !ask.trim()}
-          onClick={() => void send()}
-          className="ml-auto rounded-[8px] border px-3 py-1.5 text-[12px] font-bold text-white hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:opacity-40"
-          style={{ backgroundColor: LINK_COLOR, borderColor: LINK_COLOR }}
-        >
-          {busy ? t("link.linking") : t("link.link")}
-        </button>
-      </div>
-      {busy ? <span className="text-[10.5px] text-dim">{t("link.resuming")}</span> : null}
-      {status ? (
-        <span className={`text-[11px] font-semibold ${status.kind === "ok" ? "text-ok" : "text-err"}`}>{status.text}</span>
-      ) : null}
+      <Link2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
+      <span className="truncate">{t("link.dropped", { title: cleanTitle(drop.file.title, 48) })}</span>
     </div>
   );
 }

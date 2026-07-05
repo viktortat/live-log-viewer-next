@@ -116,8 +116,8 @@ per scan. The backend is chosen automatically by `process.platform` (see
 `src/lib/proc/`); `VIEWER_PROC_BACKEND=portable` forces the portable path on
 Linux too, for testing.
 
-Windows is not supported — the package's `os` field blocks install with
-`EBADPLATFORM`. WSL works as Linux.
+The package supports Linux and macOS. The package's `os` field blocks Windows
+installs with `EBADPLATFORM`. WSL works as Linux.
 
 `tmux` is optional. Without it, log viewing, the parentage tree, live activity
 and deep links all work; the composer, agent spawn/kill and resume-into-pane

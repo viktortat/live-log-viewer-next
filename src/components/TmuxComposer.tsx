@@ -2,7 +2,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
-import { ArrowRight, ArrowUpToLine, Loader2, Play, Square, SquareTerminal, X } from "@/components/icons";
+import { ArrowRight, ArrowUpToLine, FoldVertical, Loader2, Play, Square, SquareTerminal, X } from "@/components/icons";
 import { useDictation } from "@/hooks/useDictation";
 import { useTmuxTarget } from "@/hooks/useTmuxTarget";
 import { getLocale, useLocale } from "@/lib/i18n";
@@ -41,6 +41,21 @@ function canMessageWithoutPane(file: FileEntry): boolean {
 }
 
 const draftKey = (path: string) => "llvDraft:" + path;
+const COMPOSE_EVENT = "llv-compose-draft";
+
+/**
+ * Drops text into a conversation's composer from outside (the link-arrow
+ * gesture): the stored draft grows and any mounted composer for that path
+ * reloads it and takes focus, so the user types their ask right where the
+ * context landed. With no composer on screen the draft simply waits in
+ * sessionStorage for the next mount.
+ */
+export function appendComposerDraft(path: string, text: string) {
+  const key = draftKey(path);
+  const prev = sessionStorage.getItem(key) ?? "";
+  sessionStorage.setItem(key, prev.trim() ? prev.replace(/\s*$/, "") + "\n\n" + text : text);
+  window.dispatchEvent(new CustomEvent(COMPOSE_EVENT, { detail: { path } }));
+}
 
 const hhmm = (at: number) =>
   new Date(at).toLocaleTimeString(getLocale() === "uk" ? "uk-UA" : "en-US", { hour12: false, hour: "2-digit", minute: "2-digit" });
@@ -74,6 +89,7 @@ export function TmuxComposer({ file }: { file: FileEntry }) {
   const [sending, setSending] = useState(false);
   const [voiceSending, setVoiceSending] = useState(false);
   const [interrupting, setInterrupting] = useState(false);
+  const [compacting, setCompacting] = useState(false);
   const [status, setStatus] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [sent, setSent] = useState<SentEntry[]>([]);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -112,6 +128,27 @@ export function TmuxComposer({ file }: { file: FileEntry }) {
 
   /* eslint-disable-next-line react-hooks/set-state-in-effect */
   useEffect(() => setSent(readSent(file.path)), [file.path]);
+
+  /* A link-arrow drop appended to the stored draft; reload it and put the
+     caret at the end so the ask can be typed straight away. Goes through the
+     stable ref/setter pair rather than setText — the draft is already
+     persisted, and the closure must not go stale between events. */
+  useEffect(() => {
+    const onCompose = (event: Event) => {
+      if ((event as CustomEvent<{ path?: string }>).detail?.path !== file.path) return;
+      const next = sessionStorage.getItem(draftKey(file.path)) ?? "";
+      textRef.current = next;
+      setTextState(next);
+      requestAnimationFrame(() => {
+        const el = inputRef.current;
+        if (!el) return;
+        el.focus();
+        el.setSelectionRange(el.value.length, el.value.length);
+      });
+    };
+    window.addEventListener(COMPOSE_EVENT, onCompose);
+    return () => window.removeEventListener(COMPOSE_EVENT, onCompose);
+  }, [file.path]);
 
   /* The queue drains itself: a pane message is delivered once the transcript
      grew after the send moment; a spawn prompt lands in a fresh window whose
@@ -236,6 +273,31 @@ export function TmuxComposer({ file }: { file: FileEntry }) {
     }
   };
 
+  /* Types /compact into the live pane; the compaction band then appears in
+     the feed on its own once the transcript grows the marker. */
+  const compact = async () => {
+    if (compacting) return;
+    setCompacting(true);
+    setStatus(null);
+    try {
+      const res = await fetch("/api/tmux", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "compact", path: file.path }),
+      });
+      const json = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok || !json.ok) {
+        setStatus({ kind: "err", text: json.error ?? t("composer.failedCompact") });
+        return;
+      }
+      setStatus({ kind: "ok", text: t("composer.compactSent") });
+    } catch {
+      setStatus({ kind: "err", text: t("common.serverUnavailable") });
+    } finally {
+      setCompacting(false);
+    }
+  };
+
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault();
     void send();
@@ -323,16 +385,28 @@ export function TmuxComposer({ file }: { file: FileEntry }) {
             )}
           </span>
           {!spawnMode ? (
-            <button
-              type="button"
-              aria-label={t("composer.interruptAria")}
-              title={t("composer.interruptTitle")}
-              disabled={interrupting}
-              onClick={() => void interrupt()}
-              className="inline-flex shrink-0 items-center justify-center rounded-[8px] border border-line bg-panel p-2 text-dim hover:border-err/40 hover:text-err focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-50"
-            >
-              {interrupting ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Square className="h-4 w-4" fill="currentColor" aria-hidden />}
-            </button>
+            <>
+              <button
+                type="button"
+                aria-label={t("composer.interruptAria")}
+                title={t("composer.interruptTitle")}
+                disabled={interrupting}
+                onClick={() => void interrupt()}
+                className="inline-flex shrink-0 items-center justify-center rounded-[8px] border border-line bg-panel p-2 text-dim hover:border-err/40 hover:text-err focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-50"
+              >
+                {interrupting ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Square className="h-4 w-4" fill="currentColor" aria-hidden />}
+              </button>
+              <button
+                type="button"
+                aria-label={t("composer.compactAria")}
+                title={t("composer.compactTitle")}
+                disabled={compacting}
+                onClick={() => void compact()}
+                className="inline-flex shrink-0 items-center justify-center rounded-[8px] border border-line bg-panel p-2 text-dim hover:border-[#0d9488]/50 hover:text-[#0b7c72] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-50"
+              >
+                {compacting ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <FoldVertical className="h-4 w-4" aria-hidden />}
+              </button>
+            </>
           ) : null}
         </div>
         <div className="flex shrink-0 items-center gap-1.5">

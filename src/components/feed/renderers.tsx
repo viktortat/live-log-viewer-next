@@ -91,6 +91,7 @@ type Item =
   | { kind: "inbox-image"; name: string; path: string }
   | { kind: "blob"; bytes: number; text: string }
   | { kind: "sysmsg"; label: string; text: string }
+  | { kind: "compact"; ts: unknown; trigger?: string; preTokens?: number; summary?: string }
   | { kind: "raw"; text: string; err: boolean };
 
 const BLOB_MIN = 20_000;
@@ -150,13 +151,14 @@ function extractInboxImages(text: string): { cleaned: string; images: InboxImage
 /* Harness-injected turns (system prompts, reminders, command wrappers, hook
    output) arrive as "user" records but the user never typed them; they fold
    into a collapsed system row so real messages stand out. */
-const SYS_MSG_RE = /^\s*(?:<[a-zA-Z][\w:-]*|Caveat: The messages below|\[Request interrupted|This came from another Claude session)/;
+const SYS_MSG_RE = /^\s*(?:<[a-zA-Z][\w:-]*|Caveat: The messages below|\[Request interrupted|This came from another Claude session|# AGENTS\.md instructions)/;
 
-function sysMsgLabel(text: string): string {
+function sysMsgLabel(text: string, fallback?: string): string {
   const tag = text.match(/^\s*<([a-zA-Z][\w:-]*)/)?.[1];
   if (tag) return tag;
+  if (/^\s*# AGENTS\.md/.test(text)) return "AGENTS.md";
   if (/^\s*Caveat:/.test(text)) return "caveat";
-  return tr("render.system");
+  return fallback || tr("render.system");
 }
 
 function tmsgAttr(attrs: string, name: string): string {
@@ -603,11 +605,43 @@ export function buildFeed(file: FileEntry, lines: string[], showSvc: boolean, li
     for (const image of images) items.push({ kind: "inbox-image", name: image.name, path: image.path });
   };
   /* Codex user turns carry no envelopes to unwrap: the bubble text plus a card
-     per attached inbox image. */
+     per attached inbox image. A rollout logs the same turn twice — as a
+     response_item and as an event_msg echo right next to it — so an exact
+     repeat with nothing rendered in between folds away; a message the user
+     really sent twice has agent output between the copies and stays. */
+  let lastUser: { text: string; at: number } | null = null;
   const addPlainUser = (ts: unknown, text: string) => {
+    if (lastUser && lastUser.text === text && lastUser.at === items.length) return;
     const { cleaned, images } = extractInboxImages(text);
     if (cleaned) items.push({ kind: "user", ts, text: cleaned });
     for (const image of images) items.push({ kind: "inbox-image", name: image.name, path: image.path });
+    lastUser = { text, at: items.length };
+  };
+  /* Harness turns fold into a sysmsg row; the same echo dedup applies since
+     they arrive through the same doubled user-role records. */
+  const addSysMsg = (text: string, fallbackLabel?: string) => {
+    if (lastUser && lastUser.text === text && lastUser.at === items.length) return;
+    items.push({ kind: "sysmsg", label: sysMsgLabel(text, fallbackLabel), text });
+    lastUser = { text, at: items.length };
+  };
+  /* One Codex compaction leaves two markers (a `compacted` record, then an
+     event_msg echo a few hidden records later); the flag folds the pair. */
+  let codexCompacted = false;
+  const addCompact = (ts: unknown, meta?: { trigger?: string; preTokens?: number }) => {
+    items.push({ kind: "compact", ts, trigger: meta?.trigger, preTokens: meta?.preTokens });
+  };
+  /* The Claude compact summary follows its boundary record; attach it there,
+     skipping the service rows that may sit between them. */
+  const attachCompactSummary = (ts: unknown, summary: string) => {
+    for (let i = items.length - 1; i >= 0; i -= 1) {
+      const it = items[i];
+      if (it.kind === "compact") {
+        it.summary = summary;
+        return;
+      }
+      if (it.kind !== "svc" && it.kind !== "note") break;
+    }
+    items.push({ kind: "compact", ts, summary });
   };
   const renderCodex = (obj: Record<string, unknown>) => {
     const p = rec(obj.payload);
@@ -619,19 +653,25 @@ export function buildFeed(file: FileEntry, lines: string[], showSvc: boolean, li
       if (p.type === "agent_message" && p.message) return addProse(ts, textPart(p.message));
       if (p.type === "user_message" && p.message) {
         const text = textPart(p.message);
-        if (SYS_MSG_RE.test(text)) return items.push({ kind: "sysmsg", label: sysMsgLabel(text), text });
+        if (SYS_MSG_RE.test(text)) return addSysMsg(text);
         return addPlainUser(ts, text);
       }
       if (p.type === "task_started") return addNote(tr("render.taskStarted") + (ts ? " · " + hhmm(ts) : ""));
       if (p.type === "task_complete") return addNote(tr("render.taskComplete") + (ts ? " · " + hhmm(ts) : ""));
+      if (p.type === "context_compacted") {
+        if (codexCompacted) return void (codexCompacted = false);
+        return addCompact(ts);
+      }
       return addSvc(textPart(p.type) || "event");
     }
     if (obj.type === "response_item") {
       if (p.type === "message") {
         const text = arr(p.content).map((c) => textPart(c.text) || textPart(c.input_text)).join(" ").trim();
         if (!text) return addSvc("message " + textPart(p.role));
-        if (p.role !== "user") return addProse(ts, text);
-        if (SYS_MSG_RE.test(text)) return items.push({ kind: "sysmsg", label: sysMsgLabel(text), text });
+        if (p.role === "assistant") return addProse(ts, text);
+        /* developer/system turns (<permissions instructions>, collaboration
+           mode, …) are harness-injected, never something the user typed. */
+        if (p.role !== "user" || SYS_MSG_RE.test(text)) return addSysMsg(text, textPart(p.role));
         return addPlainUser(ts, text);
       }
       if (p.type === "function_call") {
@@ -667,6 +707,10 @@ export function buildFeed(file: FileEntry, lines: string[], showSvc: boolean, li
       if (p.type === "reasoning") return addSvc("reasoning");
       return addSvc(textPart(p.type) || "item");
     }
+    if (obj.type === "compacted") {
+      codexCompacted = true;
+      return addCompact(ts);
+    }
     addSvc(textPart(obj.type) || tr("render.record"));
   };
   const renderClaude = (obj: Record<string, unknown>) => {
@@ -674,6 +718,17 @@ export function buildFeed(file: FileEntry, lines: string[], showSvc: boolean, li
     if (obj.type === "user" && obj.message) {
       const content = rec(obj.message).content;
       const fileWrap = rec(rec(obj.toolUseResult).file);
+      /* The post-compaction summary is injected as a user record, but it is
+         the compactor talking — fold it into the boundary marker instead of
+         rendering a giant bubble the user never wrote. */
+      if (obj.isCompactSummary === true) {
+        const text =
+          typeof content === "string"
+            ? content
+            : arr(content).filter((part) => part.type === "text").map((part) => textPart(part.text)).join(" ");
+        if (text.trim()) attachCompactSummary(ts, text.trim());
+        return;
+      }
       if (typeof content === "string") addUserText(ts, content);
       else {
         for (const part of arr(content)) {
@@ -727,6 +782,10 @@ export function buildFeed(file: FileEntry, lines: string[], showSvc: boolean, li
         }
       }
       return;
+    }
+    if (obj.type === "system" && obj.subtype === "compact_boundary") {
+      const meta = rec(obj.compactMetadata);
+      return addCompact(ts, { trigger: textPart(meta.trigger) || undefined, preTokens: num(meta.preTokens) });
     }
     addSvc(textPart(obj.type) || tr("render.record"));
   };
@@ -836,6 +895,45 @@ export function ImageCard({ media, data, w, h, bytes }: { media: string; data: s
       </button>
       {view === "full" ? (
         <Lightbox src={src} alt={`${tr("render.image")} ${dims}`} caption={`${dims} · ${kb} ${tr("common.kb")}`} onClose={() => setView("thumb")} />
+      ) : null}
+    </div>
+  );
+}
+
+/** Compaction marker: a full-width band the eye catches while scrolling —
+    the context was condensed here, everything above predates the squeeze.
+    The Claude summary (when present) unfolds beneath it on demand. */
+function CompactBand({ item }: { item: Extract<Item, { kind: "compact" }> }) {
+  const detail = [
+    item.trigger ? tr(item.trigger === "auto" ? "render.compactAuto" : "render.compactManual") : "",
+    item.preTokens ? tr("render.compactPre", { n: Math.round(item.preTokens / 1000) }) : "",
+    hhmm(item.ts) || "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return (
+    <div className="my-3.5">
+      <div className="flex items-center gap-2.5">
+        <span className="h-px flex-1 bg-[#0d9488]/30" aria-hidden />
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-[#0d9488]/30 bg-[#e7f6f4] px-2.5 py-1 text-[11px] font-bold text-[#0b7c72]">
+          <GlyphIcon name="compact" className="h-3.5 w-3.5" />
+          {tr("render.compacted")}
+          {detail ? <span className="font-semibold opacity-75">{detail}</span> : null}
+        </span>
+        <span className="h-px flex-1 bg-[#0d9488]/30" aria-hidden />
+      </div>
+      {item.summary ? (
+        <details className="group/cmp mt-1.5 text-center">
+          <summary className="cursor-pointer list-none text-[11px] font-semibold text-[#0b7c72] [&::-webkit-details-marker]:hidden">
+            <span className="group-open/cmp:hidden">
+              {tr("render.compactSummary")} · {tr("common.show")}
+            </span>
+            <span className="hidden group-open/cmp:inline">{tr("common.collapse")}</span>
+          </summary>
+          <pre className="mt-1 max-h-[320px] overflow-auto whitespace-pre-wrap break-words rounded-[10px] border border-line bg-bg px-3 py-2 text-left font-mono text-[11px] text-[#555]">
+            {item.summary}
+          </pre>
+        </details>
       ) : null}
     </div>
   );
@@ -1215,6 +1313,7 @@ export const FeedItem = memo(function FeedItem({ item }: { item: Item }) {
   if (item.kind === "inbox-image") return <InboxImageCard name={item.name} path={item.path} />;
   if (item.kind === "blob") return <BlobCard bytes={item.bytes} text={item.text} />;
   if (item.kind === "sysmsg") return <SysMsgCard label={item.label} text={item.text} />;
+  if (item.kind === "compact") return <CompactBand item={item} />;
   if (item.kind === "review") return <ReviewCard item={item} />;
   if (item.kind === "mem-citation") return <MemCitationCard item={item} />;
   if (item.kind === "prose") {

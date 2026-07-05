@@ -131,6 +131,26 @@ export async function POST(req: NextRequest): Promise<NextResponse<SendResponse 
     }
   }
 
+  /* The /compact slash command typed into the live pane: both agent CLIs
+     parse a submitted "/compact" and condense their context; the transcript
+     then grows a compaction marker the feed renders as a band. Only makes
+     sense against a pane that already exists — never boots a window. */
+  if (body.action === "compact") {
+    if (!filePath || !pathAllowed(filePath)) {
+      return NextResponse.json({ error: "для стискання потрібен path розмови" }, { status: 400 });
+    }
+    const target = await livePaneTarget(filePath);
+    if (target === null) {
+      return NextResponse.json({ error: "немає активного пейна агента для стискання" }, { status: 409 });
+    }
+    try {
+      await sendText(target, "/compact");
+      return NextResponse.json({ ok: true, target });
+    } catch (error) {
+      return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
+    }
+  }
+
   /* A key press into a live dialog the scrape fallback surfaced: the digit of
      a menu option, or Tab/Enter/Escape for screens the parser cannot read.
      The pane is re-read right before sending — a dialog that advanced or
