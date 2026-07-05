@@ -26,7 +26,7 @@ const SEEDED_TEMPLATES: WorkflowTemplate[] = [
     stages: [
       {
         kind: "implement",
-        agent: { engine: "codex", model: null, effort: "xhigh" },
+        agent: { engine: "codex", model: null, effort: "high" },
         scope: "Backend/API: server logic, data layer, API routes. Leave UI components alone.",
       },
       {
