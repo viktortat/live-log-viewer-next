@@ -222,6 +222,10 @@ export function Viewer() {
   );
 
   useEffect(() => {
+    /* N and F are desktop keys (D4/D6): the phone layout renders without the
+       scheme dimming channel, and a hardware keyboard there must never drive
+       hidden filter state or focus jumps. */
+    if (isMobile) return;
     /* Same guard as useSchemeCamera: hotkeys stay quiet while a composer or
        any form control is focused. */
     const typing = (target: EventTarget | null) => {
@@ -246,7 +250,7 @@ export function Viewer() {
     };
     window.addEventListener("keydown", onDown);
     return () => window.removeEventListener("keydown", onDown);
-  }, [projectQueue, queue.length, requestFocus]);
+  }, [isMobile, projectQueue, queue.length, requestFocus]);
 
   /* A popover click is a deliberate act, so unlike the N hotkey it may switch
      the project; the focus hand-off glides the board to the node. */
@@ -331,7 +335,7 @@ export function Viewer() {
                 )}
               </div>
               {queueOpen ? (
-                <div className="absolute right-0 top-[calc(100%+6px)] max-h-[60vh] w-[340px] overflow-y-auto rounded-[10px] border border-line bg-panel p-1.5 shadow-card">
+                <div className="absolute right-0 top-[calc(100%+6px)] max-h-[60vh] w-[340px] max-w-[calc(100vw-2rem)] overflow-y-auto rounded-[10px] border border-line bg-panel p-1.5 shadow-card">
                   <div className="px-2.5 pb-1 pt-1.5 text-[10.5px] font-bold uppercase tracking-wide text-dim">
                     {t("attention.popoverTitle")}
                   </div>
