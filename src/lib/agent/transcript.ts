@@ -53,7 +53,7 @@ export interface HeadCwdOptions {
  * Session working directory from the head of a transcript. Understands both
  * shapes: claude records carry `cwd` at the top level, codex rollouts nest it
  * as `payload.cwd` in the session_meta record. Malformed or partial head rows
- * are skipped, not fatal.
+ * are skipped and the scan continues.
  */
 export function headCwd(pathname: string, options: HeadCwdOptions = {}): string | null {
   const head = readTranscriptHead(pathname, options.bytes ?? HEAD_BYTES);

@@ -231,8 +231,8 @@ function FarLabel({ file }: { file: FileEntry }) {
 
 const liteNoop = () => undefined;
 
-/* The flow strip spans the whole implementer↔reviewer pair, not just the
-   implementer's card — it is the loop's shared header. */
+/* The flow strip is the loop's shared header: it spans the whole
+   implementer↔reviewer pair. */
 const PAIR_W = NODE_W * 2 + LOOP_GAP;
 
 /* Map mode (the phone's full-screen overlay) draws every conversation as a

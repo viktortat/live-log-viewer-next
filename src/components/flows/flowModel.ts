@@ -36,9 +36,10 @@ const locallyClosedServerSnapshot: ReadonlySet<string> = new Set();
 
 /**
  * The polled flows with this tab's optimistic closes applied: a flow closed
- * here renders as closed at once instead of waiting out the poll interval.
- * Mapped (state → closed) rather than filtered, so reviewer transcripts stay
- * claimed by their rounds and never resurface as standalone nodes.
+ * here renders as closed the moment the X is clicked, and the poll catches
+ * up later. The overlay maps the flow's state to closed while keeping the
+ * flow in the list, so reviewer transcripts stay claimed by their rounds and
+ * never resurface as standalone nodes.
  */
 export function useEffectiveFlows(flows: Flow[]): Flow[] {
   const closed = useSyncExternalStore(
