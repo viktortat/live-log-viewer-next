@@ -60,6 +60,7 @@ function makeHarness() {
   const calls: string[] = [];
   const state = {
     execFail: null as string | null, // subcommand marker that should fail
+    dirtyWorktree: false,
     spawnFail: false,
     paneDead: new Set<string>(),
     messages: new Map<string, { text: string; ts: number }>(),
@@ -78,6 +79,7 @@ function makeHarness() {
       const key = `${command} ${args.join(" ")}`;
       calls.push(`exec:${key} @${cwd}`);
       if (state.execFail && key.includes(state.execFail)) return { code: 1, stdout: "", stderr: `${state.execFail} boom` } as ExecResult;
+      if (args[0] === "status" && state.dirtyWorktree) return { code: 0, stdout: " M src/x.ts\n", stderr: "" };
       if (args[0] === "rev-parse" && args[1] === "--abbrev-ref") return { code: 0, stdout: "main\n", stderr: "" };
       if (args[0] === "rev-parse") return { code: 0, stdout: "basesha\n", stderr: "" };
       if (command === "gh" && args[1] === "create") return { code: 0, stdout: state.prUrl + "\n", stderr: "" };
@@ -369,6 +371,31 @@ test("a finish failure parks; retry-stage reruns the finish", async () => {
   expect(after.stateDetail).toContain("push");
 
   harness.state.execFail = null;
+  await patchWorkflow(wf.id, { action: "retry-stage" }, harness.ports);
+  await tickWorkflows([], harness.ports);
+  after = load(wf.id);
+  expect(after.state).toBe("approved");
+  expect(after.prUrl).toBe("https://github.com/o/r/pull/9");
+});
+
+test("finishing a dirty worktree parks; retry after the commit publishes", async () => {
+  const harness = makeHarness();
+  harness.state.dirtyWorktree = true;
+  const wf = createWf(harness.ports);
+  const workflows = loadWorkflows();
+  const cur = workflows.find((item) => item.id === wf.id)!;
+  cur.state = "finishing";
+  cur.baseRef = "basesha";
+  cur.baseBranch = "main";
+  saveWorkflows(workflows);
+  await tickWorkflows([], harness.ports);
+  let after = load(wf.id);
+  expect(after.state).toBe("needs_decision");
+  expect(after.stateDetail).toContain("uncommitted changes");
+  expect(after.stateDetail).toContain("src/x.ts");
+  expect(harness.calls.some((call) => call.includes("git push"))).toBe(false);
+
+  harness.state.dirtyWorktree = false;
   await patchWorkflow(wf.id, { action: "retry-stage" }, harness.ports);
   await tickWorkflows([], harness.ports);
   after = load(wf.id);

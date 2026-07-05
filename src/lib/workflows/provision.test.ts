@@ -6,7 +6,7 @@ import path from "node:path";
 
 process.env.LLV_STATE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "llv-wf-prov-test-"));
 const { buildWorkflow, normalizeTemplate } = await import("./store");
-const { finishMerge, finishPr, provisionWorktree, prTitle, realExec, setupStatus, startSetup } = await import("./provision");
+const { finishMerge, finishPr, provisionWorktree, prTitle, realExec, runFinish, setupStatus, startSetup } = await import("./provision");
 
 type Workflow = import("./types").Workflow;
 type ExecResult = import("./provision").ExecResult;
@@ -166,6 +166,35 @@ test("finishPr maps a rejected push to an error", () => {
   if (!res.ok) expect(res.error).toContain("rejected");
 });
 
+test("runFinish refuses a dirty worktree before any push, gh or merge runs", () => {
+  const wf = makeWorkflow("/repo", { baseBranch: "main" });
+  const { exec, calls } = fakeExec((call) => {
+    if (call.args[0] === "status") return ok(" M src/app.ts\n?? notes.txt\n M a.ts\n M b.ts\n");
+    return ok();
+  });
+  const res = runFinish(wf, "body", exec);
+  expect(res.ok).toBe(false);
+  if (!res.ok) {
+    expect(res.error).toContain("uncommitted changes");
+    expect(res.error).toContain("src/app.ts");
+    expect(res.error).toContain("+1 more");
+  }
+  /* The guard ran alone: nothing was pushed, created or merged. */
+  expect(calls.length).toBe(1);
+  expect(calls[0]).toEqual({ command: "git", args: ["status", "--porcelain"], cwd: wf.worktreeDir });
+});
+
+test("runFinish delegates to the finish action once the worktree is clean", () => {
+  const wf = makeWorkflow("/repo", { baseBranch: "main" });
+  const { exec, calls } = fakeExec((call) =>
+    call.command === "gh" ? ok("https://github.com/o/r/pull/7\n") : ok(),
+  );
+  const res = runFinish(wf, "body", exec);
+  expect(res.ok && res.prUrl).toBe("https://github.com/o/r/pull/7");
+  expect(calls[0]?.args).toEqual(["status", "--porcelain"]);
+  expect(calls[1]?.args[0]).toBe("push");
+});
+
 test("finishMerge refuses when the repo checkout left the base branch", () => {
   const wf = makeWorkflow("/repo", { baseBranch: "main" });
   const { exec } = fakeExec(() => ok("feature/elsewhere\n"));
@@ -189,7 +218,7 @@ test("finishMerge aborts and surfaces a merge conflict", () => {
 
 test("integration: provision + commit + local merge against a throwaway repo", async () => {
   const repoDir = makeRepo();
-  let wf = makeWorkflow(repoDir);
+  let wf = makeWorkflow(repoDir, { template: { ...TEMPLATE, finish: "merge" as const } });
   const res = provisionWorktree(wf, realExec);
   if (!res.ok) throw new Error(res.error);
   wf = { ...wf, baseBranch: res.baseBranch, baseRef: res.baseRef };
@@ -206,10 +235,17 @@ test("integration: provision + commit + local merge against a throwaway repo", a
   expect(setupStatus(wf).status).toBe("done");
 
   fs.writeFileSync(path.join(wf.worktreeDir, "greeting.txt"), "hi\n");
+
+  /* Uncommitted work blocks the finish: the review approved more than the
+     branch carries. */
+  const blocked = runFinish(wf, "body", realExec);
+  expect(blocked.ok).toBe(false);
+  if (!blocked.ok) expect(blocked.error).toContain("greeting.txt");
+
   git(wf.worktreeDir, "add", ".");
   git(wf.worktreeDir, "commit", "-m", "add greeting");
 
-  const merged = finishMerge(wf, realExec);
+  const merged = runFinish(wf, "body", realExec);
   if (!merged.ok) throw new Error(merged.error);
   expect(fs.existsSync(path.join(repoDir, "greeting.txt"))).toBe(true);
 });

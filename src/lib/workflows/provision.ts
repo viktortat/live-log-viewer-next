@@ -173,5 +173,19 @@ export function finishMerge(wf: Workflow, exec: ExecPort): FinishResult {
 }
 
 export function runFinish(wf: Workflow, prBody: string, exec: ExecPort): FinishResult {
+  /* Review rounds cover uncommitted changes too, while push and merge only
+     carry commits — finishing a dirty worktree would publish less than what
+     was approved. Park until every approved change is committed. */
+  const status = exec("git", ["status", "--porcelain"], wf.worktreeDir);
+  if (status.code !== 0) return failure("checking the worktree state", status);
+  const dirty = status.stdout.split("\n").filter((line) => line.trim());
+  if (dirty.length) {
+    const names = dirty.slice(0, 3).map((line) => line.slice(3).trim() || line.trim());
+    const more = dirty.length > names.length ? `, +${dirty.length - names.length} more` : "";
+    return {
+      ok: false,
+      error: `the worktree has uncommitted changes (${names.join(", ")}${more}) — commit them, then retry the finish`,
+    };
+  }
   return wf.template.finish === "merge" ? finishMerge(wf, exec) : finishPr(wf, prBody, exec);
 }
