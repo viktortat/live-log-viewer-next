@@ -1,14 +1,13 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Loader2, Play, X } from "@/components/icons";
-import { useDictation } from "@/hooks/useDictation";
+import { useComposer } from "@/hooks/useComposer";
 import { useLocale } from "@/lib/i18n";
 import type { FileEntry } from "@/lib/types";
 
-import { ImagePickerButton, ImagePreviewStrip, useImageAttachments } from "./imageAttachments";
-import { MicButtonView } from "./MicButton";
+import { ComposerBar } from "./ComposerBar";
 import { cleanTitle, engineTintOf } from "./utils";
 
 type Engine = "claude" | "codex";
@@ -99,21 +98,12 @@ export function DraftAgentPane({
   });
   const [cwd, setCwdState] = useState(() => readField(draftId, "cwd"));
   const [dirs, setDirs] = useState<string[]>([]);
-  const [text, setTextState] = useState(
-    () => readField(draftId, "text") || (src ? t("draft.readPrompt", { src }) : ""),
-  );
   const [boot, setBootState] = useState<Boot | null>(() => readBoot(draftId));
-  const [busy, setBusy] = useState(false);
-  const [voiceSending, setVoiceSending] = useState(false);
   const [slowBoot, setSlowBoot] = useState(false);
-  const [status, setStatus] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
   /* Transcripts that existed before the spawn: the codex match below must
      never grab a conversation that was already on disk. Not persisted — after
      a reload the mtime cutoff alone carries the match. */
   const knownRef = useRef<Set<string> | null>(null);
-  /* Async dictation callbacks land after the render they closed over. */
-  const textRef = useRef(text);
 
   const setEngine = (value: Engine) => {
     setEngineState(value);
@@ -123,31 +113,20 @@ export function DraftAgentPane({
     setCwdState(value);
     writeField(draftId, "cwd", value);
   };
-  const setText = (value: string | ((prev: string) => string)) => {
-    const next = typeof value === "function" ? value(textRef.current) : value;
-    textRef.current = next;
-    setTextState(next);
-    writeField(draftId, "text", next);
-  };
   const setBoot = (value: Boot | null) => {
     setBootState(value);
     writeField(draftId, "boot", value ? JSON.stringify(value) : "");
   };
 
-  const attachments = useImageAttachments({
-    onError: (message) => setStatus({ kind: "err", text: message }),
-    onAdded: () => setStatus(null),
+  /* While a spawn is in flight the whole draft is frozen (boot set), so the
+     composer's fields lock alongside the send/voice flags. */
+  const composer = useComposer({
+    initialText: () => readField(draftId, "text") || (src ? t("draft.readPrompt", { src }) : ""),
+    persistText: (value) => writeField(draftId, "text", value),
+    submit: (overrideText) => send(overrideText),
+    disabled: Boolean(boot),
   });
-  const insertSpoken = (spoken: string) => {
-    setText((prev) => (prev ? prev.trimEnd() + " " + spoken : spoken));
-    setStatus(null);
-    inputRef.current?.focus();
-  };
-  const dictation = useDictation({
-    onError: (message) => setStatus({ kind: "err", text: message }),
-    onUnclaimedText: insertSpoken,
-    onLiveCommit: insertSpoken,
-  });
+  const { text, setText, setStatus, busy, setBusy, voiceSending, attachments } = composer;
 
   /* Recent working directories, the current project's first; a handoff draft
      inherits the source transcript's own cwd over everything else. */
@@ -170,19 +149,6 @@ export function DraftAgentPane({
       cancelled = true;
     };
   }, [project, draftId, src]);
-
-  /* Realtime dictation overlays the in-flight transcript on the draft; the
-     draft state itself stays clean until stop() resolves and insertSpoken
-     appends the final text, so the two never double up. */
-  const displayText = dictation.liveText ? (text ? text.trimEnd() + " " : "") + dictation.liveText : text;
-
-  /* The field grows with its content up to ~6 rows, then scrolls inside itself. */
-  useLayoutEffect(() => {
-    const el = inputRef.current;
-    if (!el) return;
-    el.style.height = "0px";
-    el.style.height = Math.min(el.scrollHeight + 2, 160) + "px";
-  }, [displayText]);
 
   /* The handover: a claude spawn knows its transcript path up front and waits
      for exactly that file; a codex rollout has no knowable path, so the first
@@ -257,29 +223,8 @@ export function DraftAgentPane({
     }
   };
 
-  /* One-tap voice send, same contract as the pane composer. */
-  const stopAndSend = async () => {
-    if (busy || voiceSending) return;
-    setVoiceSending(true);
-    try {
-      const spoken = await dictation.stop();
-      if (spoken === null) return;
-      /* Realtime mode: `spoken` is just the uncommitted tail — often empty,
-         the rest already landed in the draft through onLiveCommit. */
-      const combined = spoken ? (textRef.current ? textRef.current.trimEnd() + " " + spoken : spoken) : textRef.current;
-      setText(combined);
-      await send(combined);
-    } finally {
-      setVoiceSending(false);
-    }
-  };
-
   const tint = engineTintOf(engine);
-  const dictationRecording = dictation.phase === "rec";
-  const dictationBusy = dictation.phase === "busy";
-  const fieldsDisabled = busy || voiceSending || Boolean(boot);
-  const canSend =
-    !fieldsDisabled && !dictationBusy && (dictationRecording || Boolean(text.trim()) || attachments.images.length > 0);
+  const fieldsDisabled = composer.fieldsDisabled;
   const dirListId = "draft-dirs-" + draftId;
 
   return (
@@ -391,57 +336,24 @@ export function DraftAgentPane({
         className="flex shrink-0 flex-col gap-1.5 border-t border-line bg-[#fbfbfd] px-2.5 py-2"
         aria-label={t("draft.promptAria")}
       >
-        <textarea
-          ref={inputRef}
-          value={displayText}
-          rows={1}
-          readOnly={Boolean(dictation.liveText)}
-          onChange={(event) => setText(event.target.value)}
-          onPaste={attachments.handlePaste}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-              event.preventDefault();
-              if (dictation.phase === "rec") void stopAndSend();
-              else void send();
-            }
-          }}
+        <ComposerBar
+          composer={composer}
           placeholder={t("draft.placeholder")}
-          aria-label={t("draft.promptTextAria")}
-          disabled={fieldsDisabled}
-          className="w-full resize-none overflow-y-auto rounded-[10px] border border-line bg-panel px-2.5 py-1.5 text-[12.5px] leading-[18px] text-[#222] placeholder:text-dim focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-60"
-        />
-        <div className="flex items-center justify-between gap-1.5">
-          <span
-            className="inline-flex min-w-0 items-center gap-1 rounded-full bg-chip px-1.5 py-1 font-mono text-[9.5px] font-semibold text-[#555]"
-            title={t("draft.newWindowTitle")}
-          >
-            <Play className="h-3 w-3 shrink-0" aria-hidden /> {t("draft.newAgent")}
-          </span>
-          <div className="flex shrink-0 items-center gap-1.5">
-            <MicButtonView {...dictation} busy={voiceSending} onText={insertSpoken} />
-            <ImagePickerButton
-              ariaLabel={t("draft.addImages")}
-              className="inline-flex shrink-0 items-center justify-center rounded-[8px] border border-line bg-panel p-2 text-dim hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-              onFiles={attachments.addFiles}
-            />
-            <button
-              type={dictationRecording ? "button" : "submit"}
-              onClick={dictationRecording ? () => void stopAndSend() : undefined}
-              disabled={!canSend}
-              aria-label={dictationRecording ? t("draft.stopAndLaunch") : t("composer.launchAgent")}
-              style={dictationRecording ? undefined : { backgroundColor: tint.color, borderColor: tint.color }}
-              className={`inline-flex shrink-0 items-center justify-center rounded-[8px] border p-2 text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:opacity-40 ${
-                dictationRecording ? "border-err bg-err hover:opacity-90" : "hover:opacity-90"
-              }`}
+          textareaAriaLabel={t("draft.promptTextAria")}
+          imageAriaLabel={t("draft.addImages")}
+          sendLabelIdle={t("composer.launchAgent")}
+          sendLabelRecording={t("draft.stopAndLaunch")}
+          sendIdleClassName="hover:opacity-90"
+          sendIdleStyle={{ backgroundColor: tint.color, borderColor: tint.color }}
+          leftSlot={
+            <span
+              className="inline-flex min-w-0 items-center gap-1 rounded-full bg-chip px-1.5 py-1 font-mono text-[9.5px] font-semibold text-[#555]"
+              title={t("draft.newWindowTitle")}
             >
-              {busy || voiceSending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Play className="h-4 w-4" aria-hidden />}
-            </button>
-          </div>
-        </div>
-        <ImagePreviewStrip images={attachments.images} onRemove={attachments.removeAt} />
-        {status ? (
-          <span className={`truncate text-[10.5px] font-semibold ${status.kind === "ok" ? "text-ok" : "text-err"}`}>{status.text}</span>
-        ) : null}
+              <Play className="h-3 w-3 shrink-0" aria-hidden /> {t("draft.newAgent")}
+            </span>
+          }
+        />
       </form>
     </section>
   );

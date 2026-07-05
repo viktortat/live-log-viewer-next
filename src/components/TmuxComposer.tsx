@@ -1,15 +1,14 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { ArrowRight, ArrowUpToLine, FoldVertical, Loader2, Play, Square, SquareTerminal, X } from "@/components/icons";
-import { useDictation } from "@/hooks/useDictation";
+import { useComposer } from "@/hooks/useComposer";
 import { useTmuxTarget } from "@/hooks/useTmuxTarget";
 import { getLocale, useLocale } from "@/lib/i18n";
 import type { FileEntry } from "@/lib/types";
 
-import { ImagePickerButton, ImagePreviewStrip, useImageAttachments } from "./imageAttachments";
-import { MicButtonView } from "./MicButton";
+import { ComposerBar } from "./ComposerBar";
 
 interface SentEntry {
   id: number;
@@ -71,60 +70,18 @@ export function TmuxComposer({ file }: { file: FileEntry }) {
   const target = useTmuxTarget(file.pid, canMessageWithoutPane(file) ? file.path : undefined);
   /* Column reshuffles can remount the composer mid-typing; the draft lives in
      sessionStorage so the text survives the remount. */
-  const [text, setTextState] = useState(() => {
-    if (typeof window === "undefined") return "";
-    return sessionStorage.getItem(draftKey(file.path)) ?? "";
+  const composer = useComposer({
+    initialText: () => (typeof window === "undefined" ? "" : sessionStorage.getItem(draftKey(file.path)) ?? ""),
+    persistText: (value) => {
+      if (value) sessionStorage.setItem(draftKey(file.path), value);
+      else sessionStorage.removeItem(draftKey(file.path));
+    },
+    submit: (overrideText) => send(overrideText),
   });
-  /* Async dictation callbacks land after the render they closed over; the ref
-     always holds the latest draft, so an updater form appends to what the user
-     typed in the meantime instead of overwriting it. */
-  const textRef = useRef(text);
-  const setText = (value: string | ((prev: string) => string)) => {
-    const next = typeof value === "function" ? value(textRef.current) : value;
-    textRef.current = next;
-    setTextState(next);
-    if (next) sessionStorage.setItem(draftKey(file.path), next);
-    else sessionStorage.removeItem(draftKey(file.path));
-  };
-  const [sending, setSending] = useState(false);
-  const [voiceSending, setVoiceSending] = useState(false);
+  const { text, textRef, setText, setTextState, inputRef, setStatus, busy, setBusy, voiceSending, attachments } = composer;
   const [interrupting, setInterrupting] = useState(false);
   const [compacting, setCompacting] = useState(false);
-  const [status, setStatus] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [sent, setSent] = useState<SentEntry[]>([]);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
-  const attachments = useImageAttachments({
-    onError: (message) => setStatus({ kind: "err", text: message }),
-    onAdded: () => setStatus(null),
-  });
-  const insertSpoken = (spoken: string) => {
-    setText((prev) => (prev ? prev.trimEnd() + " " + spoken : spoken));
-    setStatus(null);
-    inputRef.current?.focus();
-  };
-  /* onUnclaimedText catches the 120s auto-stop, whose transcript no stop()
-     promise waits for — it goes into the input for review, never auto-sent.
-     onLiveCommit lands realtime segments in the draft while still talking. */
-  const dictation = useDictation({
-    onError: (message) => setStatus({ kind: "err", text: message }),
-    onUnclaimedText: insertSpoken,
-    onLiveCommit: insertSpoken,
-  });
-
-  /* Realtime dictation overlays the in-flight transcript on the draft; the
-     draft state itself stays clean until stop() resolves and insertSpoken
-     appends the final text, so the two never double up. */
-  const displayText = dictation.liveText ? (text ? text.trimEnd() + " " : "") + dictation.liveText : text;
-
-  /* The field grows with its content up to ~6 rows, then scrolls inside
-     itself. Measured from scrollHeight on every text change, which also
-     covers restored drafts and dictation inserts. */
-  useLayoutEffect(() => {
-    const el = inputRef.current;
-    if (!el) return;
-    el.style.height = "0px";
-    el.style.height = Math.min(el.scrollHeight + 2, 160) + "px";
-  }, [displayText]);
 
   /* eslint-disable-next-line react-hooks/set-state-in-effect */
   useEffect(() => setSent(readSent(file.path)), [file.path]);
@@ -183,8 +140,8 @@ export function TmuxComposer({ file }: { file: FileEntry }) {
 
   const send = async (overrideText?: string) => {
     const payloadText = overrideText ?? text;
-    if (sending || voiceSending || (!payloadText.trim() && !attachments.images.length)) return;
-    setSending(true);
+    if (busy || voiceSending || (!payloadText.trim() && !attachments.images.length)) return;
+    setBusy(true);
     setStatus(null);
     try {
       const res = await fetch("/api/tmux", {
@@ -224,29 +181,7 @@ export function TmuxComposer({ file }: { file: FileEntry }) {
     } catch {
       setStatus({ kind: "err", text: t("common.serverUnavailable") });
     } finally {
-      setSending(false);
-    }
-  };
-
-  /* One-tap voice send: stop the recording in flight, wait for the transcript,
-     append it to whatever is already typed, then send immediately — no second
-     tap on a separate send button. A transcription failure leaves the typed
-     text untouched and never calls send(); useDictation already reported the
-     error through onError above. */
-  const stopAndSend = async () => {
-    if (sending || voiceSending) return;
-    setVoiceSending(true);
-    try {
-      const spoken = await dictation.stop();
-      if (spoken === null) return;
-      /* Read through the ref: live commits and typing may have grown the
-         draft while this closure's render was in flight. In realtime mode
-         `spoken` is just the uncommitted tail — often empty. */
-      const combined = spoken ? (textRef.current ? textRef.current.trimEnd() + " " + spoken : spoken) : textRef.current;
-      setText(combined);
-      await send(combined);
-    } finally {
-      setVoiceSending(false);
+      setBusy(false);
     }
   };
 
@@ -303,12 +238,6 @@ export function TmuxComposer({ file }: { file: FileEntry }) {
     void send();
   };
 
-  const dictationRecording = dictation.phase === "rec";
-  const dictationBusy = dictation.phase === "busy";
-  const canSend =
-    !sending && !voiceSending && !dictationBusy && (dictationRecording || Boolean(text.trim()) || attachments.images.length > 0);
-  const fieldsDisabled = sending || voiceSending;
-
   return (
     <form
       onSubmit={handleSubmit}
@@ -341,101 +270,62 @@ export function TmuxComposer({ file }: { file: FileEntry }) {
           ))}
         </div>
       ) : null}
-      <textarea
-        ref={inputRef}
-        value={displayText}
-        rows={1}
-        readOnly={Boolean(dictation.liveText)}
-        onChange={(event) => setText(event.target.value)}
-        onPaste={attachments.handlePaste}
-        onKeyDown={(event) => {
-          /* Enter sends like the old single-line input; Shift+Enter makes a
-             new line. Composition guard keeps IME confirms from sending.
-             During recording Enter means stop-and-send — a plain send() would
-             fire off just the typed prefix and leave the recording running. */
-          if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-            event.preventDefault();
-            if (dictation.phase === "rec") void stopAndSend();
-            else void send();
-          }
-        }}
+      <ComposerBar
+        composer={composer}
         placeholder={relayMode ? t("composer.placeholderRelay") : spawnMode ? t("composer.placeholderSpawn") : t("composer.placeholderSend")}
-        aria-label={t("composer.textAria")}
-        disabled={fieldsDisabled}
-        className="w-full resize-none overflow-y-auto rounded-[10px] border border-line bg-panel px-2.5 py-1.5 text-[12.5px] leading-[18px] text-[#222] placeholder:text-dim focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-60"
+        textareaAriaLabel={t("composer.textAria")}
+        imageAriaLabel={t("composer.addImages")}
+        sendLabelIdle={spawnMode ? t("composer.launchAgent") : t("composer.sendToAgent")}
+        sendLabelRecording={t("composer.stopAndSend")}
+        sendTitleRecording={t("composer.stopAndSendTitle")}
+        sendIdleClassName="border-accent bg-accent hover:opacity-90"
+        leftSlot={
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span
+              className="inline-flex min-w-0 items-center gap-1 rounded-full bg-chip px-1.5 py-1 font-mono text-[9.5px] font-semibold text-[#555]"
+              title={relayMode ? t("composer.titleRelay") : spawnMode ? t("composer.titleSpawnResumed") : `tmux ${target}`}
+            >
+              {relayMode ? (
+                <>
+                  <ArrowUpToLine className="h-3 w-3 shrink-0" aria-hidden /> {t("composer.root")}
+                </>
+              ) : spawnMode ? (
+                <>
+                  <Play className="h-3 w-3 shrink-0" aria-hidden /> resume
+                </>
+              ) : (
+                <>
+                  <SquareTerminal className="h-3 w-3 shrink-0" aria-hidden /> <span className="truncate">{target}</span>
+                </>
+              )}
+            </span>
+            {!spawnMode ? (
+              <>
+                <button
+                  type="button"
+                  aria-label={t("composer.interruptAria")}
+                  title={t("composer.interruptTitle")}
+                  disabled={interrupting}
+                  onClick={() => void interrupt()}
+                  className="inline-flex shrink-0 items-center justify-center rounded-[8px] border border-line bg-panel p-2 text-dim hover:border-err/40 hover:text-err focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-50"
+                >
+                  {interrupting ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Square className="h-4 w-4" fill="currentColor" aria-hidden />}
+                </button>
+                <button
+                  type="button"
+                  aria-label={t("composer.compactAria")}
+                  title={t("composer.compactTitle")}
+                  disabled={compacting}
+                  onClick={() => void compact()}
+                  className="inline-flex shrink-0 items-center justify-center rounded-[8px] border border-line bg-panel p-2 text-dim hover:border-[#0d9488]/50 hover:text-[#0b7c72] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-50"
+                >
+                  {compacting ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <FoldVertical className="h-4 w-4" aria-hidden />}
+                </button>
+              </>
+            ) : null}
+          </div>
+        }
       />
-      <div className="flex items-center justify-between gap-1.5">
-        <div className="flex min-w-0 items-center gap-1.5">
-          <span
-            className="inline-flex min-w-0 items-center gap-1 rounded-full bg-chip px-1.5 py-1 font-mono text-[9.5px] font-semibold text-[#555]"
-            title={relayMode ? t("composer.titleRelay") : spawnMode ? t("composer.titleSpawnResumed") : `tmux ${target}`}
-          >
-            {relayMode ? (
-              <>
-                <ArrowUpToLine className="h-3 w-3 shrink-0" aria-hidden /> {t("composer.root")}
-              </>
-            ) : spawnMode ? (
-              <>
-                <Play className="h-3 w-3 shrink-0" aria-hidden /> resume
-              </>
-            ) : (
-              <>
-                <SquareTerminal className="h-3 w-3 shrink-0" aria-hidden /> <span className="truncate">{target}</span>
-              </>
-            )}
-          </span>
-          {!spawnMode ? (
-            <>
-              <button
-                type="button"
-                aria-label={t("composer.interruptAria")}
-                title={t("composer.interruptTitle")}
-                disabled={interrupting}
-                onClick={() => void interrupt()}
-                className="inline-flex shrink-0 items-center justify-center rounded-[8px] border border-line bg-panel p-2 text-dim hover:border-err/40 hover:text-err focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-50"
-              >
-                {interrupting ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Square className="h-4 w-4" fill="currentColor" aria-hidden />}
-              </button>
-              <button
-                type="button"
-                aria-label={t("composer.compactAria")}
-                title={t("composer.compactTitle")}
-                disabled={compacting}
-                onClick={() => void compact()}
-                className="inline-flex shrink-0 items-center justify-center rounded-[8px] border border-line bg-panel p-2 text-dim hover:border-[#0d9488]/50 hover:text-[#0b7c72] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-50"
-              >
-                {compacting ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <FoldVertical className="h-4 w-4" aria-hidden />}
-              </button>
-            </>
-          ) : null}
-        </div>
-        <div className="flex shrink-0 items-center gap-1.5">
-          <MicButtonView {...dictation} busy={voiceSending} onText={insertSpoken} />
-          <ImagePickerButton
-            ariaLabel={t("composer.addImages")}
-            className="inline-flex shrink-0 items-center justify-center rounded-[8px] border border-line bg-panel p-2 text-dim hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-            onFiles={attachments.addFiles}
-          />
-          <button
-            type={dictationRecording ? "button" : "submit"}
-            onClick={dictationRecording ? () => void stopAndSend() : undefined}
-            disabled={!canSend}
-            aria-label={dictationRecording ? t("composer.stopAndSend") : spawnMode ? t("composer.launchAgent") : t("composer.sendToAgent")}
-            title={dictationRecording ? t("composer.stopAndSendTitle") : undefined}
-            className={`inline-flex shrink-0 items-center justify-center rounded-[8px] border p-2 text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:opacity-40 ${
-              dictationRecording ? "border-err bg-err hover:opacity-90" : "border-accent bg-accent hover:opacity-90"
-            }`}
-          >
-            {sending || voiceSending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Play className="h-4 w-4" aria-hidden />}
-          </button>
-        </div>
-      </div>
-      <ImagePreviewStrip images={attachments.images} onRemove={attachments.removeAt} />
-      {status ? (
-        <span className={`truncate text-[10.5px] font-semibold ${status.kind === "ok" ? "text-ok" : "text-err"}`}>
-          {status.text}
-        </span>
-      ) : null}
     </form>
   );
 }
