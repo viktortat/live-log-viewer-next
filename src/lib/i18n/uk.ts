@@ -523,4 +523,5 @@ export const uk: Record<keyof typeof en, Message> = {
   "tasks.sheetEmpty": "задач поки нема",
   "tasks.sheetGone": "задачі вже немає",
   "tasks.textNotSaved": "текст не зберігся — надсилання скасовано, спробуй ще раз",
+  "tasks.emptyTextBlocked": "порожній текст не зберігається — віднови текст задачі перед надсиланням",
 };

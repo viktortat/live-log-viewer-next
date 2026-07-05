@@ -561,4 +561,5 @@ export const en = {
   "tasks.sheetEmpty": "no tasks yet",
   "tasks.sheetGone": "the task is gone",
   "tasks.textNotSaved": "the text didn't save — delivery aborted, try again",
+  "tasks.emptyTextBlocked": "empty text isn't saved — restore the task text before sending",
 } satisfies Dictionary;

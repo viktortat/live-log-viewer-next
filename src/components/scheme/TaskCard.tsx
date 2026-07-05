@@ -8,6 +8,7 @@ import type { BoardTask } from "@/lib/tasks/types";
 import type { FileEntry } from "@/lib/types";
 
 import { TargetChecklist } from "@/components/tasks/TargetChecklist";
+import { pushTaskToast } from "@/components/tasks/taskToast";
 import { nextTaskStatus, TASK_TONES, taskTitle } from "@/components/tasks/taskModel";
 import { activityDot, cleanTitle, engineBadge } from "@/components/utils";
 
@@ -270,6 +271,9 @@ export const TaskCard = memo(function TaskCard({
   const [localPos, setLocalPos] = useState<{ x: number; y: number; seen: string } | null>(null);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
+  /* The last edit ended blank: nothing was saved (the server rejects empty
+     text), so deliveries are blocked until the user restores the text. */
+  const [blankEdit, setBlankEdit] = useState(false);
   const [pop, setPop] = useState<"send" | "spawn" | null>(null);
   const [armDelete, setArmDelete] = useState(false);
   const editRef = useRef<HTMLTextAreaElement | null>(null);
@@ -294,7 +298,36 @@ export const TaskCard = memo(function TaskCard({
 
   const commitEdit = () => {
     setEditing(false);
-    if (draft.trim() && draft !== task.text) void handlers.patch(task.id, { text: draft });
+    if (!draft.trim()) {
+      /* A blank edit is never persisted; the card falls back to the stored
+         text, and the toast plus the delivery block below keep the user from
+         unknowingly sending the previous body. */
+      if (draft !== task.text) {
+        setBlankEdit(true);
+        pushTaskToast("err", t("tasks.emptyTextBlocked"));
+      }
+      return;
+    }
+    setBlankEdit(false);
+    if (draft !== task.text) void handlers.patch(task.id, { text: draft });
+  };
+
+  /* Blur fires before an action button's click, so commitEdit has already
+     classified the edit by the time these guards run. */
+  const deliveryBlocked = (): boolean => {
+    if (editing ? !draft.trim() : blankEdit) {
+      pushTaskToast("err", t("tasks.emptyTextBlocked"));
+      return true;
+    }
+    return false;
+  };
+  const guardedSend = (target: BoardTask, paths: string[]) => {
+    if (deliveryBlocked()) return;
+    handlers.send(target, paths);
+  };
+  const guardedSpawn = async (target: BoardTask, engine: "claude" | "codex", cwd: string): Promise<string | null> => {
+    if (deliveryBlocked()) return t("tasks.emptyTextBlocked");
+    return handlers.spawn(target, engine, cwd);
   };
 
   const beginEdit = () => {
@@ -413,7 +446,7 @@ export const TaskCard = memo(function TaskCard({
                 task={task}
                 assignment={assignment}
                 file={assignment.path ? (byPath.get(assignment.path) ?? null) : null}
-                onRetry={(target, path) => handlers.send(target, [path])}
+                onRetry={(target, path) => guardedSend(target, [path])}
               />
             ))}
           </div>
@@ -434,7 +467,7 @@ export const TaskCard = memo(function TaskCard({
           onClick={() => {
             const selection = handlers.selectionPaths();
             if (selection.length) {
-              handlers.send(task, selection);
+              guardedSend(task, selection);
               return;
             }
             setPop((prev) => (prev === "send" ? null : "send"));
@@ -481,9 +514,9 @@ export const TaskCard = memo(function TaskCard({
       </div>
 
       {pop === "send" ? (
-        <SendPicker task={task} files={files} project={task.project} onSend={handlers.send} onClose={() => setPop(null)} />
+        <SendPicker task={task} files={files} project={task.project} onSend={guardedSend} onClose={() => setPop(null)} />
       ) : null}
-      {pop === "spawn" ? <SpawnPopover task={task} onSpawn={handlers.spawn} onClose={() => setPop(null)} /> : null}
+      {pop === "spawn" ? <SpawnPopover task={task} onSpawn={guardedSpawn} onClose={() => setPop(null)} /> : null}
     </div>
   );
 });

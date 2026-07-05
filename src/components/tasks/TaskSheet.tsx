@@ -188,9 +188,12 @@ function TaskDetailView({
   /* Re-created each render, so blur/send always commit the latest draft.
      Returns the PATCH error: deliveries read the persisted text server-side,
      so they must wait for the save and abort when it fails, or a quick send
-     after editing would deliver the previous body. */
+     after editing would deliver the previous body. A blank draft is never
+     persisted (the server rejects empty text) — deliveries treat it as an
+     error too, or the blank editor would silently send the old body. */
   const commitText = async (): Promise<string | null> => {
-    if (!draft.trim() || draft === task.text) return null;
+    if (draft === task.text) return null;
+    if (!draft.trim()) return t("tasks.emptyTextBlocked");
     const error = await updateTask(task.id, { text: draft });
     if (error) pushTaskToast("err", error);
     return error;
@@ -199,6 +202,10 @@ function TaskDetailView({
   const send = async () => {
     const targets = [...checked];
     if (!targets.length || sending) return;
+    if (!draft.trim()) {
+      pushTaskToast("err", t("tasks.emptyTextBlocked"));
+      return;
+    }
     setSending(true);
     try {
       if ((await commitText()) !== null) return;
@@ -276,6 +283,10 @@ function TaskDetailView({
                     className="shrink-0 rounded px-1 text-[10px] font-bold text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
                     onClick={() => {
                       void (async () => {
+                        if (!draft.trim()) {
+                          pushTaskToast("err", t("tasks.emptyTextBlocked"));
+                          return;
+                        }
                         if ((await commitText()) !== null) return;
                         const sent = await sendTask(task.id, [assignment.path!]);
                         if ("error" in sent) pushTaskToast("err", sent.error);
