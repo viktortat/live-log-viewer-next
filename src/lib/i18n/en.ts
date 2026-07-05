@@ -541,4 +541,10 @@ export const en = {
   "tasks.sendOk": "Delivered {delivered} of {total}",
   "tasks.sendFailPart": "✗ “{title}”: {error}",
   "tasks.spawnOk": "agent started in tmux {target}",
+  "tasks.composerAria": "Composer for the selected conversations",
+  "tasks.composerPlaceholder": "message the selected agents…",
+  "tasks.composerCount": { one: "{count} conversation", other: "{count} conversations" },
+  "tasks.composerToggle": "create a task",
+  "tasks.composerToggleTitle": "On — the text becomes a tracked task card assigned to the selection; off — a plain broadcast with no trace",
+  "tasks.composerNeedsText": "a task needs text",
 } satisfies Dictionary;

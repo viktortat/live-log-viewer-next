@@ -503,4 +503,10 @@ export const uk: Record<keyof typeof en, Message> = {
   "tasks.sendOk": "Доставлено {delivered} з {total}",
   "tasks.sendFailPart": "✗ „{title}“: {error}",
   "tasks.spawnOk": "агента запущено в tmux {target}",
+  "tasks.composerAria": "Композер для вибраних розмов",
+  "tasks.composerPlaceholder": "написати вибраним агентам…",
+  "tasks.composerCount": { one: "{count} розмова", few: "{count} розмови", many: "{count} розмов", other: "{count} розмов" },
+  "tasks.composerToggle": "створити задачу",
+  "tasks.composerToggleTitle": "Увімкнено — текст стає задачею-карткою з призначеннями на вибір; вимкнено — проста розсилка без сліду",
+  "tasks.composerNeedsText": "для задачі потрібен текст",
 };

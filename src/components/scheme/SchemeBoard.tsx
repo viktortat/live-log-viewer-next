@@ -10,6 +10,7 @@ import type { FileEntry } from "@/lib/types";
 
 import { flowByImplementer } from "@/components/flows/flowModel";
 import type { BranchGroup } from "@/components/projectModel";
+import { SelectionComposer } from "@/components/tasks/SelectionComposer";
 import { createTask, deleteTask, sendTask, spawnTaskAgent, updateTask } from "@/components/tasks/taskApi";
 import { pushTaskToast, sendSummary } from "@/components/tasks/taskToast";
 
@@ -284,6 +285,21 @@ export function SchemeBoard({
   );
   const cancelCreate = useCallback(() => setPendingTask(null), []);
 
+  /* The docked selection composer targets the selected conversation nodes;
+     a new task card lands near their centroid. */
+  const selectedNodes = useMemo(() => layout.nodes.filter((node) => selected.has(node.file.path)), [layout, selected]);
+  const selectionFiles = useMemo(() => selectedNodes.map((node) => node.file), [selectedNodes]);
+  const selectionCentroid = useMemo(() => {
+    if (!selectedNodes.length) return { x: 0, y: 0 };
+    let cx = 0;
+    let cy = 0;
+    for (const node of selectedNodes) {
+      cx += node.x + node.w / 2;
+      cy += node.y + node.h / 2;
+    }
+    return { x: cx / selectedNodes.length - TASK_W / 2, y: cy / selectedNodes.length - 60 };
+  }, [selectedNodes]);
+
   const tile = 24 * cam.z;
 
   return (
@@ -394,6 +410,10 @@ export function SchemeBoard({
       </div>
 
       <Minimap layout={layout} cam={cam} vp={vp} onJump={jump} />
+
+      {!mapMode && selectionFiles.length ? (
+        <SelectionComposer project={project} selection={selectionFiles} centroid={selectionCentroid} />
+      ) : null}
     </div>
   );
 }
