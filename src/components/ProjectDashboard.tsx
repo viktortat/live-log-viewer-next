@@ -8,9 +8,14 @@ import type { Flow } from "@/lib/flows/types";
 import { useLocale } from "@/lib/i18n";
 import type { FileEntry } from "@/lib/types";
 
+import type { Workflow } from "@/lib/workflows/types";
+
 import { TaskStrip } from "./BranchPane";
 import { clearDraftStorage, draftSrc, setDraftSrc } from "./DraftAgentPane";
 import { claimedReviewerPaths } from "./flows/flowModel";
+import { clearWorkflowDraftStorage } from "./workflows/WorkflowDraftPane";
+import { WorkflowStrip } from "./workflows/WorkflowStrip";
+import { isWorkflowDraftId, workflowsForProject } from "./workflows/workflowModel";
 import { MobileFocusView } from "./mobile/MobileFocusView";
 import { SchemeBoard } from "./scheme/SchemeBoard";
 import { Switchboard } from "./Switchboard";
@@ -26,6 +31,7 @@ const HIGHLIGHT_MS = 1800;
 interface Props {
   files: FileEntry[];
   flows: Flow[];
+  workflows: Workflow[];
   project: string;
   /** Bumped by Viewer on every openFile so a same-project open re-reads prefs
       even though `project` itself did not change. */
@@ -90,6 +96,7 @@ function gotoProject(project: string) {
 export function ProjectDashboard({
   files,
   flows,
+  workflows,
   project,
   openNonce,
   focusRequest,
@@ -144,6 +151,7 @@ export function ProjectDashboard({
     const claimed = claimedReviewerPaths(flows);
     return claimed.size ? files.filter((file) => !claimed.has(file.path)) : files;
   }, [files, flows]);
+  const projectWorkflows = useMemo(() => workflowsForProject(workflows, project, files), [workflows, project, files]);
   const groups = useMemo(() => buildBranchGroups(groupFiles, project), [groupFiles, project]);
   const activeRoots = useMemo(() => new Set(groups.map((group) => group.key)), [groups]);
   const cards = useMemo(() => collapsedTrees(groupFiles, project, activeRoots), [groupFiles, project, activeRoots]);
@@ -247,6 +255,14 @@ export function ProjectDashboard({
     pendingFocusRef.current = "draft::" + id;
   };
 
+  /* The «+ Воркфлоу» sibling (W6): the same draft-card pattern, its pane
+     carries the template picker, the repo directory and the task brief. */
+  const addWorkflowDraft = () => {
+    const id = "wf-" + newDraftId();
+    persistDrafts([...drafts, id]);
+    pendingFocusRef.current = "draft::" + id;
+  };
+
   /* The handoff handle under a pane: a draft that continues this conversation
      hangs right below it, inheriting the transcript and its directory. A
      repeat click refocuses the existing draft instead of stacking duplicates. */
@@ -263,7 +279,8 @@ export function ProjectDashboard({
   };
 
   const removeDraft = (id: string) => {
-    clearDraftStorage(id);
+    if (isWorkflowDraftId(id)) clearWorkflowDraftStorage(id);
+    else clearDraftStorage(id);
     persistDrafts(drafts.filter((item) => item !== id));
   };
 
@@ -391,7 +408,23 @@ export function ProjectDashboard({
         >
           <span className="text-[13px] leading-none text-accent">+</span> {t("dash.agent")}
         </button>
+        <button
+          type="button"
+          onClick={addWorkflowDraft}
+          aria-label={t("dash.newWorkflow")}
+          className="flex shrink-0 items-center gap-1 rounded-[8px] border border-line bg-panel px-2.5 py-1 text-[11.5px] font-bold text-ink shadow-card hover:border-accent/45 hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+        >
+          <span className="text-[13px] leading-none text-accent">+</span> {t("dash.workflow")}
+        </button>
       </div>
+
+      {projectWorkflows.length ? (
+        <div className="flex shrink-0 flex-col gap-1.5 border-b border-line bg-[#fbfbfd] px-3 py-1.5">
+          {projectWorkflows.map((wf) => (
+            <WorkflowStrip key={wf.id} wf={wf} />
+          ))}
+        </div>
+      ) : null}
 
       {dockedTasks.length ? (
         <div className="shrink-0 border-b border-line bg-[#fbfbfd]">

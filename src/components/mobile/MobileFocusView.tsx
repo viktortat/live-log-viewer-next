@@ -9,6 +9,8 @@ import type { FileEntry } from "@/lib/types";
 
 import { BranchPane } from "@/components/BranchPane";
 import { DraftAgentPane } from "@/components/DraftAgentPane";
+import { isWorkflowDraftId } from "@/components/workflows/workflowModel";
+import { WorkflowDraftPane } from "@/components/workflows/WorkflowDraftPane";
 import { RoundDeck } from "@/components/flows/RoundDeck";
 import { canHandoff, HandoffHandle } from "@/components/HandoffHandle";
 import { paneState, type PaneState } from "@/components/paneState";
@@ -206,14 +208,24 @@ export function MobileFocusView({ project, groups, manual, files, flows, drafts,
             <RoundDeck flow={activeDeck.flow} rounds={activeDeck.rounds} files={files} onSelect={onSelect} focusRound={null} />
           </div>
         ) : activeDraft ? (
-          <DraftAgentPane
-            key={activeDraft.key}
-            draftId={activeDraft.id}
-            project={project}
-            files={files}
-            onClose={() => onDraftClose(activeDraft.id)}
-            onSpawned={(file) => onDraftSpawned(activeDraft.id, file)}
-          />
+          isWorkflowDraftId(activeDraft.id) ? (
+            <WorkflowDraftPane
+              key={activeDraft.key}
+              draftId={activeDraft.id}
+              project={project}
+              onClose={() => onDraftClose(activeDraft.id)}
+              onLaunched={() => onDraftClose(activeDraft.id)}
+            />
+          ) : (
+            <DraftAgentPane
+              key={activeDraft.key}
+              draftId={activeDraft.id}
+              project={project}
+              files={files}
+              onClose={() => onDraftClose(activeDraft.id)}
+              onSpawned={(file) => onDraftSpawned(activeDraft.id, file)}
+            />
+          )
         ) : (
           <div className="flex flex-1 items-center justify-center text-center text-[13px] text-dim">{t("mobile.noConvos")}</div>
         )}

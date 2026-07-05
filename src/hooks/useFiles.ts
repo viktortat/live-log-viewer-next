@@ -3,17 +3,20 @@
 import { useEffect, useState } from "react";
 
 import { FLOWS_CHANGED_EVENT } from "@/components/flows/flowModel";
+import { WORKFLOWS_CHANGED_EVENT } from "@/components/workflows/workflowModel";
 import type { Flow } from "@/lib/flows/types";
 import type { FileEntry, FilesResponse } from "@/lib/types";
+import type { Workflow } from "@/lib/workflows/types";
 
 const POLL_MS = 10_000;
 
 export interface FilesData {
   files: FileEntry[];
   flows: Flow[];
+  workflows: Workflow[];
 }
 
-const EMPTY: FilesData = { files: [], flows: [] };
+const EMPTY: FilesData = { files: [], flows: [], workflows: [] };
 
 /** Polls /api/files. Keeps the last good list on transient fetch errors. */
 export function useFiles(): FilesData {
@@ -31,8 +34,8 @@ export function useFiles(): FilesData {
         /* The flows rollout changes the payload from a bare array to
            {files, flows}; accept both so client and server can deploy in
            either order. */
-        if (Array.isArray(parsed)) setData({ files: parsed, flows: [] });
-        else setData({ files: parsed.files ?? [], flows: parsed.flows ?? [] });
+        if (Array.isArray(parsed)) setData({ files: parsed, flows: [], workflows: [] });
+        else setData({ files: parsed.files ?? [], flows: parsed.flows ?? [], workflows: parsed.workflows ?? [] });
       } catch {
         /* keep previous list */
       }
@@ -43,10 +46,12 @@ export function useFiles(): FilesData {
        not sit on stale state for up to a full poll interval. */
     const onFlowsChanged = () => void load();
     window.addEventListener(FLOWS_CHANGED_EVENT, onFlowsChanged);
+    window.addEventListener(WORKFLOWS_CHANGED_EVENT, onFlowsChanged);
     return () => {
       alive = false;
       clearInterval(t);
       window.removeEventListener(FLOWS_CHANGED_EVENT, onFlowsChanged);
+      window.removeEventListener(WORKFLOWS_CHANGED_EVENT, onFlowsChanged);
     };
   }, []);
   return data;

@@ -24,6 +24,8 @@ import { RoleTag } from "@/components/flows/RoleTag";
 import { RoundDeck } from "@/components/flows/RoundDeck";
 import { RoundStateIcon } from "@/components/flows/RoundIcons";
 import { canHandoff, HandoffHandle } from "@/components/HandoffHandle";
+import { isWorkflowDraftId } from "@/components/workflows/workflowModel";
+import { WorkflowDraftPane } from "@/components/workflows/WorkflowDraftPane";
 import { activityDot, cleanTitle, engineBadge, engineEdge, fmtAge } from "@/components/utils";
 
 import {
@@ -537,13 +539,22 @@ function DraftShell({
       style={{ transform: `translate(${draft.x}px, ${draft.y}px)`, width: draft.w, height: draft.h, transition: MOVE_TRANSITION }}
     >
       <div className={`flex h-full ${ringed ? "rounded-[10px] ring-2 ring-accent/60 ring-offset-2 ring-offset-bg" : ""}`}>
-        <DraftAgentPane
-          draftId={draft.id}
-          project={project}
-          files={files}
-          onClose={() => onDraftClose(draft.id)}
-          onSpawned={(file) => onDraftSpawned(draft.id, file)}
-        />
+        {isWorkflowDraftId(draft.id) ? (
+          <WorkflowDraftPane
+            draftId={draft.id}
+            project={project}
+            onClose={() => onDraftClose(draft.id)}
+            onLaunched={() => onDraftClose(draft.id)}
+          />
+        ) : (
+          <DraftAgentPane
+            draftId={draft.id}
+            project={project}
+            files={files}
+            onClose={() => onDraftClose(draft.id)}
+            onSpawned={(file) => onDraftSpawned(draft.id, file)}
+          />
+        )}
       </div>
     </div>
   );
