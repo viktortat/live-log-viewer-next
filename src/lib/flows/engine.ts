@@ -73,6 +73,7 @@ export function newRound(flow: Flow, triggeredBy: Round["triggeredBy"], readyNot
     n: flow.rounds.length + 1,
     reviewerPath: null,
     sessionId: null,
+    reviewerPane: null,
     findingsPath: null,
     triggeredBy,
     readyNote,
@@ -164,6 +165,9 @@ async function launchReviewer(flow: Flow, round: Round): Promise<void> {
       readOnly: true,
     });
     const pane = await spawnAgentWithPrompt(spec, prompt);
+    /* The pane handle makes cancel-round reliable even while the reviewer's
+       transcript is still unattributed (codex, or an early stop click). */
+    round.reviewerPane = { paneId: pane.paneId, windowName: spec.windowName };
     if (spec.transcript) round.reviewerPath = spec.transcript;
     if (!round.reviewerPath && pane.panePid) round.error = null;
     return;
@@ -184,7 +188,7 @@ async function relayFindings(flow: Flow, entriesByPath: Map<string, FileEntry>, 
     flow.closedAt = isoNow();
   } else if (round.verdict === "COMMENT") {
     flow.state = "done_comment";
-  } else if (flow.rounds.length >= flow.roundLimit) {
+  } else if (flow.roundLimit > 0 && flow.rounds.length >= flow.roundLimit) {
     markNeedsDecision(flow, "round limit reached");
   } else {
     flow.state = "fixing";

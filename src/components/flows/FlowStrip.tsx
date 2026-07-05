@@ -2,12 +2,15 @@
 
 import { useState } from "react";
 
-import { Pause, Play, RefreshCw, Square, X } from "lucide-react";
+import { Infinity as InfinityIcon, Pause, Play, RefreshCw, Square, X } from "lucide-react";
 
 import { type MessageKey, useLocale } from "@/lib/i18n";
 import type { Flow, FlowAction } from "@/lib/flows/types";
 
-import { ATTENTION_STATES, patchFlow, stateLabel, VERDICT_GLYPHS, verdictTone } from "./flowModel";
+import { Hint } from "@/components/Hint";
+
+import { ATTENTION_STATES, patchFlow, stateLabel, verdictTone } from "./flowModel";
+import { RoundStateIcon } from "./RoundIcons";
 
 /* The one button the current state is waiting on, rendered prominent. */
 const PENDING_ACTIONS: Partial<Record<Flow["state"], { labelKey: MessageKey; action: FlowAction }>> = {
@@ -19,6 +22,9 @@ const PENDING_ACTIONS: Partial<Record<Flow["state"], { labelKey: MessageKey; act
 };
 
 const BUSY_STATES: ReadonlySet<Flow["state"]> = new Set(["spawning", "reviewing", "relaying", "fixing"]);
+
+/* The round-limit stops offered on the strip; 0 = unlimited (∞). */
+const LIMIT_STOPS = [1, 2, 3, 4, 5, 0];
 
 function stateDot(flow: Flow): string {
   if (flow.state === "approved") return "bg-ok";
@@ -106,7 +112,7 @@ export function FlowStrip({ flow, onFocusRound }: { flow: Flow; onFocusRound?: (
                 onClick={() => onFocusRound?.(round.n)}
               >
                 R{round.n}
-                {round.verdict ? <span>{VERDICT_GLYPHS[round.verdict]}</span> : live ? <span>⏳</span> : <span>!</span>}
+                <RoundStateIcon verdict={round.verdict} error={!!round.error} />
                 {round.findingsCount != null && round.findingsCount > 0 ? <span>{round.findingsCount}</span> : null}
               </button>
             </span>
@@ -123,26 +129,28 @@ export function FlowStrip({ flow, onFocusRound }: { flow: Flow; onFocusRound?: (
         ) : null}
         {busy ? <RefreshCw className="h-3.5 w-3.5 shrink-0 animate-spin text-dim" aria-hidden /> : null}
         {noteTakingAction ? (
-          <input
-            className="w-40 shrink-0 rounded-full border border-line bg-bg px-2.5 py-1 text-[10.5px] font-medium text-ink placeholder:text-dim/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-            value={note}
-            placeholder={t("flowStrip.notePlaceholder")}
-            title={t("flowStrip.noteTitle")}
-            onChange={(event) => setNote(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && pending) void run(pending.action, { note });
-            }}
-          />
+          <Hint label={t("flowStrip.noteTitle")}>
+            <input
+              className="w-40 shrink-0 rounded-full border border-line bg-bg px-2.5 py-1 text-[10.5px] font-medium text-ink placeholder:text-dim/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+              value={note}
+              placeholder={t("flowStrip.notePlaceholder")}
+              onChange={(event) => setNote(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && pending) void run(pending.action, { note });
+              }}
+            />
+          </Hint>
         ) : null}
         {flow.state === "reviewing" ? (
-          <button
-            className="inline-flex h-6 shrink-0 items-center gap-1 rounded-full border border-err/40 bg-[#fbeaea] px-2.5 text-[10.5px] font-bold text-err hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-40"
-            disabled={busy}
-            title={t("flowStrip.stopReviewerTitle")}
-            onClick={() => void run("cancel-round")}
-          >
-            <Square className="h-3 w-3" aria-hidden /> {t("flowStrip.stopReviewer")}
-          </button>
+          <Hint label={t("flowStrip.stopReviewerTitle")}>
+            <button
+              className="inline-flex h-6 shrink-0 items-center gap-1 rounded-full border border-err/40 bg-[#fbeaea] px-2.5 text-[10.5px] font-bold text-err hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-40"
+              disabled={busy}
+              onClick={() => void run("cancel-round")}
+            >
+              <Square className="h-3 w-3" aria-hidden /> {t("flowStrip.stopReviewer")}
+            </button>
+          </Hint>
         ) : null}
         {pending ? (
           <button
@@ -153,60 +161,83 @@ export function FlowStrip({ flow, onFocusRound }: { flow: Flow; onFocusRound?: (
             {t(pending.labelKey)}
           </button>
         ) : null}
-        {flow.state === "needs_decision" ? (
-          <button
-            className="shrink-0 rounded-full border border-line bg-bg px-2.5 py-1 text-[10.5px] font-semibold text-ink hover:border-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-40"
-            disabled={busy}
-            title={t("flowStrip.addRoundsTitle")}
-            onClick={() => void run("extend", { rounds: 2 })}
-          >
-            {t("flowStrip.plus2")}
-          </button>
-        ) : null}
         {closed ? null : (
           <>
-            <button
-              className={`shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-bold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-40 ${
-                flow.mode === "auto" ? "border-ok/40 bg-[#eef8f0] text-ok" : "border-line bg-bg text-dim hover:text-ink"
-              }`}
-              disabled={busy}
-              title={flow.mode === "auto" ? t("flowStrip.autoTitle") : t("flowStrip.manualTitle")}
-              onClick={() => void run("set-mode", { mode: flow.mode === "auto" ? "manual" : "auto" })}
-            >
-              {flow.mode === "auto" ? t("flowDialog.auto") : t("flowStrip.manualShort")}
-            </button>
+            <Hint label={t("flowStrip.limitTitle")}>
+              <span className="flex shrink-0 items-center gap-0.5 rounded-full border border-line bg-bg p-0.5">
+                {LIMIT_STOPS.map((stop) => {
+                  const active = flow.roundLimit === stop;
+                  /* A limit below the rounds already run would be clamped
+                     server-side anyway; show it as unavailable. */
+                  const unavailable = stop !== 0 && stop < flow.rounds.length;
+                  return (
+                    <button
+                      key={stop}
+                      className={`inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[10px] font-bold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-30 ${
+                        active ? "bg-accent text-white" : "text-dim hover:bg-panel hover:text-ink"
+                      }`}
+                      disabled={busy || unavailable}
+                      aria-label={stop === 0 ? t("flowStrip.limitUnlimitedAria") : t("flowStrip.limitAria", { count: stop })}
+                      aria-pressed={active}
+                      onClick={() => void run("set-round-limit", { rounds: stop })}
+                    >
+                      {stop === 0 ? <InfinityIcon className="h-3 w-3" aria-hidden /> : stop}
+                    </button>
+                  );
+                })}
+                {!LIMIT_STOPS.includes(flow.roundLimit) ? (
+                  <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-accent px-1 text-[10px] font-bold text-white">
+                    {flow.roundLimit}
+                  </span>
+                ) : null}
+              </span>
+            </Hint>
+            <Hint label={flow.mode === "auto" ? t("flowStrip.autoTitle") : t("flowStrip.manualTitle")}>
+              <button
+                className={`shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-bold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-40 ${
+                  flow.mode === "auto" ? "border-ok/40 bg-[#eef8f0] text-ok" : "border-line bg-bg text-dim hover:text-ink"
+                }`}
+                disabled={busy}
+                onClick={() => void run("set-mode", { mode: flow.mode === "auto" ? "manual" : "auto" })}
+              >
+                {flow.mode === "auto" ? t("flowDialog.auto") : t("flowStrip.manualShort")}
+              </button>
+            </Hint>
             {flow.state === "paused" ? (
-              <button
-                className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-ok hover:bg-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-40"
-                disabled={busy}
-                title={t("flowStrip.resume")}
-                aria-label={t("flowStrip.resume")}
-                onClick={() => void run("resume")}
-              >
-                <Play className="h-3.5 w-3.5" aria-hidden />
-              </button>
+              <Hint label={t("flowStrip.resume")}>
+                <button
+                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-ok hover:bg-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-40"
+                  disabled={busy}
+                  aria-label={t("flowStrip.resume")}
+                  onClick={() => void run("resume")}
+                >
+                  <Play className="h-3.5 w-3.5" aria-hidden />
+                </button>
+              </Hint>
             ) : (
-              <button
-                className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-dim hover:bg-bg hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-40"
-                disabled={busy}
-                title={t("flowStrip.pause")}
-                aria-label={t("flowStrip.pause")}
-                onClick={() => void run("pause")}
-              >
-                <Pause className="h-3.5 w-3.5" aria-hidden />
-              </button>
+              <Hint label={t("flowStrip.pause")}>
+                <button
+                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-dim hover:bg-bg hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-40"
+                  disabled={busy}
+                  aria-label={t("flowStrip.pause")}
+                  onClick={() => void run("pause")}
+                >
+                  <Pause className="h-3.5 w-3.5" aria-hidden />
+                </button>
+              </Hint>
             )}
           </>
         )}
-        <button
-          className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-dim hover:bg-bg hover:text-err focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-40"
-          disabled={busy}
-          title={t("flowStrip.close")}
-          aria-label={t("flowStrip.close")}
-          onClick={() => void run("close")}
-        >
-          <X className="h-3.5 w-3.5" aria-hidden />
-        </button>
+        <Hint label={t("flowStrip.close")}>
+          <button
+            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-dim hover:bg-bg hover:text-err focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-40"
+            disabled={busy}
+            aria-label={t("flowStrip.close")}
+            onClick={() => void run("close")}
+          >
+            <X className="h-3.5 w-3.5" aria-hidden />
+          </button>
+        </Hint>
       </span>
     </div>
   );

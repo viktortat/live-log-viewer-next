@@ -2,7 +2,8 @@ import crypto from "node:crypto";
 
 import { headCwd } from "@/lib/agent/transcript";
 import { livePaneTarget } from "@/lib/delivery";
-import { killPane } from "@/lib/tmux";
+import { isShellCommand } from "@/lib/status";
+import { killPane, paneInfo } from "@/lib/tmux";
 import type { FileEntry } from "@/lib/types";
 
 import { isoNow, lastRound, newRound, sendToImplementer } from "./engine";
@@ -110,12 +111,23 @@ export async function cancelRound(id: string): Promise<{ flow?: Flow; error?: st
     return { error: "no reviewer is running for this flow", status: 409 };
   }
   forgetHeadlessReview(flow.id, round.n);
-  if (flow.reviewerMode === "pane" && round.reviewerPath) {
-    /* Best-effort: the pane may already be gone, or the scanner may not have
-       attributed a pid yet — the cancel still stands either way. */
+  if (flow.reviewerMode === "pane") {
+    /* Best-effort: the pane may already be gone — the cancel still stands.
+       The pane handle captured at spawn is authoritative (it exists before
+       the scanner attributes a transcript); the window-name check guards
+       against pane-id reuse after a tmux server restart. The transcript
+       lookup is the fallback for rounds persisted before the handle existed. */
     try {
-      const target = await livePaneTarget(round.reviewerPath);
-      if (target !== null) await killPane(target);
+      const pane = round.reviewerPane;
+      if (pane) {
+        const info = await paneInfo(pane.paneId);
+        if (info && info.windowName === pane.windowName && !isShellCommand(info.command)) {
+          await killPane(pane.paneId);
+        }
+      } else if (round.reviewerPath) {
+        const target = await livePaneTarget(round.reviewerPath);
+        if (target !== null) await killPane(target);
+      }
     } catch {
       /* pane already closed */
     }
@@ -165,6 +177,7 @@ export function patchFlow(id: string, req: PatchFlowRequest): { flow?: Flow; err
     Object.assign(round, {
       reviewerPath: null,
       sessionId: null,
+      reviewerPane: null,
       findingsPath: null,
       verdict: null,
       findingsCount: null,
@@ -181,8 +194,26 @@ export function patchFlow(id: string, req: PatchFlowRequest): { flow?: Flow; err
     flow.stateDetail = null;
   } else if (req.action === "extend") {
     const add = Number.isInteger(req.rounds) && req.rounds && req.rounds > 0 ? Math.min(req.rounds, 20) : 1;
-    flow.roundLimit += add;
+    /* Extending an unlimited flow is a no-op with the same resume side effect. */
+    if (flow.roundLimit > 0) flow.roundLimit += add;
     if (flow.state === "needs_decision") {
+      flow.state = "waiting_ready";
+      flow.stateDetail = null;
+    }
+  } else if (req.action === "set-round-limit") {
+    const raw = req.rounds;
+    if (!Number.isInteger(raw) || raw === undefined || raw < 0 || raw > 50) {
+      return { error: "rounds must be an integer 0–50 (0 = unlimited)", status: 400 };
+    }
+    /* Rounds already run stay counted: the limit never drops below them. */
+    flow.roundLimit = raw === 0 ? 0 : Math.max(raw, flow.rounds.length);
+    /* A flow parked only because the old limit ran out resumes when the new
+       limit allows more rounds; error/cancel parks keep waiting for a human. */
+    if (
+      flow.state === "needs_decision" &&
+      flow.stateDetail === "round limit reached" &&
+      (flow.roundLimit === 0 || flow.roundLimit > flow.rounds.length)
+    ) {
       flow.state = "waiting_ready";
       flow.stateDetail = null;
     }

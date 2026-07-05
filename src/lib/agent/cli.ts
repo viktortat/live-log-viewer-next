@@ -65,9 +65,15 @@ export function freshSpecFor(engine: AgentEngine, cwd: string, options: FreshSpe
        the scanner pid-match the session by argv, where the cwd fallback would
        stay ambiguous with several agents in one directory. */
     const sid = crypto.randomUUID();
-    const args = [resolveBinary("claude"), "--dangerously-skip-permissions", "--session-id", sid];
+    const args = [resolveBinary("claude")];
+    /* Read-only rounds must not inherit the skip-permissions bypass: with it,
+       denying Edit/Write still leaves Bash free to mutate the worktree. Plan
+       mode is the CLI's real read-only policy — mutating actions need an
+       approval the reviewer never gets. */
+    if (options.readOnly) args.push("--permission-mode", "plan", "--disallowedTools", "Edit,Write,NotebookEdit");
+    else args.push("--dangerously-skip-permissions");
+    args.push("--session-id", sid);
     if (options.model) args.push("--model", options.model);
-    if (options.readOnly) args.push("--disallowedTools", "Edit,Write,NotebookEdit");
     return {
       command: args.map(shellQuote).join(" "),
       cwd,

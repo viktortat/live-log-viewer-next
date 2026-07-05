@@ -9,6 +9,7 @@ import type { FileEntry } from "@/lib/types";
 import { BranchPane } from "@/components/BranchPane";
 
 import { VERDICT_GLYPHS, verdictTone } from "./flowModel";
+import { RoundStateIcon } from "./RoundIcons";
 
 /* Vertical rhythm of the card spines peeking from under the front card. */
 const TAB_H = 26;
@@ -59,7 +60,7 @@ function RoundTab({
         className="inline-flex h-4 shrink-0 items-center gap-1 rounded-full px-1.5 text-[9.5px] font-bold"
         style={{ backgroundColor: tone.soft, color: tone.color }}
       >
-        R{round.n} {round.verdict ? VERDICT_GLYPHS[round.verdict] : round.error ? "!" : "⏳"}
+        R{round.n} <RoundStateIcon verdict={round.verdict} error={!!round.error} className="h-2.5 w-2.5" />
       </span>
       <span className="min-w-0 flex-1 truncate text-[10.5px] font-semibold text-dim">
         {round.error ? t("roundDeck.aborted") : round.verdict ? round.verdict : t("roundDeck.reviewInProgress")}

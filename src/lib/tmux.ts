@@ -394,6 +394,26 @@ export interface SpawnedPane {
   panePid?: number;
 }
 
+export interface PaneInfo {
+  windowName: string;
+  command: string;
+  display: TmuxTarget;
+}
+
+/** Window name, foreground command and display target of a pane, when it exists. */
+export async function paneInfo(paneId: string): Promise<PaneInfo | null> {
+  const res = await runTmux([
+    "display-message",
+    "-p",
+    "-t",
+    paneId,
+    "#{window_name}\t#{pane_current_command}\t#{session_name}:#{window_index}.#{pane_index}",
+  ]).catch(() => null);
+  const parts = res && res.code === 0 ? res.stdout.trim().split("\t") : null;
+  if (!parts || parts.length !== 3) return null;
+  return { windowName: parts[0] ?? "", command: parts[1] ?? "", display: parts[2] ?? paneId };
+}
+
 /**
  * The pane previously opened for this transcript when it still runs the agent.
  * Pane ids restart when the tmux server restarts, so the pane is trusted only
@@ -403,20 +423,13 @@ export interface SpawnedPane {
 export async function liveResumePane(transcriptPath: string): Promise<SpawnedPane | null> {
   const record = loadResumePanes().get(transcriptPath);
   if (!record) return null;
-  const res = await runTmux([
-    "display-message",
-    "-p",
-    "-t",
-    record.paneId,
-    "#{window_name}\t#{pane_current_command}\t#{session_name}:#{window_index}.#{pane_index}",
-  ]).catch(() => null);
-  const parts = res && res.code === 0 ? res.stdout.trim().split("\t") : null;
-  if (!parts || parts.length !== 3 || parts[0] !== record.windowName || isShellCommand(parts[1] ?? "")) {
+  const info = await paneInfo(record.paneId);
+  if (!info || info.windowName !== record.windowName || isShellCommand(info.command)) {
     loadResumePanes().delete(transcriptPath);
     persistResumePanes();
     return null;
   }
-  return { paneId: record.paneId, display: parts[2] ?? record.paneId };
+  return { paneId: record.paneId, display: info.display };
 }
 
 /** Drops a transcript's resume-window record, e.g. after its pane was killed. */

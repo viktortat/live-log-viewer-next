@@ -125,10 +125,15 @@ export function reviewerCommand(
 ): { command: string; args: string[]; outputPath: string | null; sessionId: string | null; reviewerPath: string | null } {
   if (role.engine === "claude") {
     const sessionId = crypto.randomUUID();
+    /* Plan mode instead of --dangerously-skip-permissions: the bypass would
+       leave Bash free to mutate the worktree despite the disallowed edit
+       tools. In plan mode mutating actions need an approval that a headless
+       run never grants, so the reviewer is genuinely read-only. */
     const args = [
       "-p",
       prompt,
-      "--dangerously-skip-permissions",
+      "--permission-mode",
+      "plan",
       "--session-id",
       sessionId,
       "--disallowedTools",

@@ -37,6 +37,10 @@ export type Round = {
       pre-chooses it at spawn, codex reports it in the first `--json` event.
       Survives viewer restarts so the transcript claim stays deterministic. */
   sessionId?: string | null;
+  /** Pane-mode reviewers: the tmux pane the round booted, captured at spawn
+      so cancel-round can stop it even before the scanner attributes the
+      transcript. The window name guards against pane-id reuse. */
+  reviewerPane?: { paneId: string; windowName: string } | null;
   findingsPath: string | null; // round artifact file once written
   triggeredBy: "marker" | "button";
   readyNote: string | null; // text after REVIEW_READY:
@@ -61,7 +65,7 @@ export type Flow = {
   baseMode: "head" | "merge-base";
   mode: "auto" | "manual";
   reviewerMode: "headless" | "pane";
-  roundLimit: number; // default 5
+  roundLimit: number; // default 5; 0 = unlimited
   state: FlowState;
   pausedState?: FlowState | null;
   /** Human-readable reason shown on the strip for needs_decision/paused. */
@@ -94,6 +98,7 @@ export type FlowAction =
   | "advance"
   | "retry-round"
   | "cancel-round"
+  | "set-round-limit"
   | "extend"
   | "another-round"
   | "close";
@@ -102,7 +107,8 @@ export type PatchFlowRequest = {
   action: FlowAction;
   /** for set-mode */
   mode?: "auto" | "manual";
-  /** for extend: how many rounds to add (default 1) */
+  /** for extend: how many rounds to add (default 1);
+      for set-round-limit: the absolute limit, 0 = unlimited */
   rounds?: number;
   /** for advance/retry-round: a user note the next reviewer sees as the
       round's ready note */

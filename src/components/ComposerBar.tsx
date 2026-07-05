@@ -3,6 +3,7 @@
 import { Loader2, Play } from "@/components/icons";
 import type { UseComposerReturn } from "@/hooks/useComposer";
 
+import { Hint } from "./Hint";
 import { ImagePickerButton, ImagePreviewStrip } from "./imageAttachments";
 import { MicButtonView } from "./MicButton";
 
@@ -89,24 +90,27 @@ export function ComposerBar({
         {leftSlot}
         <div className="flex shrink-0 items-center gap-1.5">
           <MicButtonView {...dictation} busy={voiceSending} onText={insertSpoken} />
-          <ImagePickerButton
-            ariaLabel={imageAriaLabel}
-            className="inline-flex shrink-0 items-center justify-center rounded-[8px] border border-line bg-panel p-2 text-dim hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-            onFiles={attachments.addFiles}
-          />
-          <button
-            type={dictationRecording ? "button" : "submit"}
-            onClick={dictationRecording ? () => void stopAndSend() : undefined}
-            disabled={!canSend}
-            aria-label={dictationRecording ? sendLabelRecording : sendLabelIdle}
-            title={dictationRecording ? sendTitleRecording : undefined}
-            style={dictationRecording ? undefined : sendIdleStyle}
-            className={`inline-flex shrink-0 items-center justify-center rounded-[8px] border p-2 text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:opacity-40 ${
-              dictationRecording ? "border-err bg-err hover:opacity-90" : sendIdleClassName
-            }`}
-          >
-            {busy || voiceSending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Play className="h-4 w-4" aria-hidden />}
-          </button>
+          <Hint label={imageAriaLabel}>
+            <ImagePickerButton
+              ariaLabel={imageAriaLabel}
+              className="inline-flex shrink-0 items-center justify-center rounded-[8px] border border-line bg-panel p-2 text-dim hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+              onFiles={attachments.addFiles}
+            />
+          </Hint>
+          <Hint label={dictationRecording ? (sendTitleRecording ?? sendLabelRecording) : sendLabelIdle}>
+            <button
+              type={dictationRecording ? "button" : "submit"}
+              onClick={dictationRecording ? () => void stopAndSend() : undefined}
+              disabled={!canSend}
+              aria-label={dictationRecording ? sendLabelRecording : sendLabelIdle}
+              style={dictationRecording ? undefined : sendIdleStyle}
+              className={`inline-flex shrink-0 items-center justify-center rounded-[8px] border p-2 text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:opacity-40 ${
+                dictationRecording ? "border-err bg-err hover:opacity-90" : sendIdleClassName
+              }`}
+            >
+              {busy || voiceSending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Play className="h-4 w-4" aria-hidden />}
+            </button>
+          </Hint>
         </div>
       </div>
       <ImagePreviewStrip images={attachments.images} onRemove={attachments.removeAt} />

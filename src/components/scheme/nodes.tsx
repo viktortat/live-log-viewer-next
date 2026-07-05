@@ -17,12 +17,12 @@ import {
   ATTENTION_STATES,
   BUSY_FLOW_STATES,
   canStartFlow,
-  VERDICT_GLYPHS,
   verdictTone,
 } from "@/components/flows/flowModel";
 import { FlowStrip } from "@/components/flows/FlowStrip";
 import { RoleTag } from "@/components/flows/RoleTag";
 import { RoundDeck } from "@/components/flows/RoundDeck";
+import { RoundStateIcon } from "@/components/flows/RoundIcons";
 import { canHandoff, HandoffHandle } from "@/components/HandoffHandle";
 import { activityDot, cleanTitle, engineBadge, engineEdge, fmtAge } from "@/components/utils";
 
@@ -330,8 +330,8 @@ function LiteDeckShell({ deck }: { deck: DeckNode }) {
               className="flex shrink-0 items-center gap-1.5 border-b border-line px-3 py-2.5"
               style={{ backgroundColor: tone.soft, color: tone.color }}
             >
-              <span className="shrink-0 text-[12px] font-bold">
-                R{round.n} {round.verdict ? VERDICT_GLYPHS[round.verdict] : round.error ? "!" : "⏳"}
+              <span className="flex shrink-0 items-center gap-1 text-[12px] font-bold">
+                R{round.n} <RoundStateIcon verdict={round.verdict} error={!!round.error} className="h-3.5 w-3.5" />
               </span>
               <span className="min-w-0 truncate text-[11px] font-semibold">
                 {round.error ? t("roundDeck.aborted") : (round.verdict ?? t("roundDeck.reviewInProgress"))}

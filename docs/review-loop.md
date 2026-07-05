@@ -56,8 +56,10 @@ Everything the UI does is plain HTTP against the local server:
   and `retry-round` accept an optional `note` the next reviewer sees as the
   round's ready note; `cancel-round` stops a running reviewer (kills the
   headless process or the reviewer pane) and parks the round in
-  `needs_decision`. In the UI these are the «Стоп» button and the note field
-  on the flow strip.
+  `needs_decision`; `set-round-limit` sets the absolute limit via `rounds`
+  (0 = unlimited, never below the rounds already run). In the UI these are
+  the «Стоп» button, the note field and the 1–5/∞ limit picker on the flow
+  strip.
 
 A ready-made Claude Code skill for driving flows agent-side ships with the
 repo at `.claude/skills/review-loop/` — agents working in a clone pick it up

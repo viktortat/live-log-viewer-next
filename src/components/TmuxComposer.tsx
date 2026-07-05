@@ -3,6 +3,9 @@
 import { useEffect, useState } from "react";
 
 import { ArrowRight, ArrowUpToLine, FoldVertical, Loader2, Play, Square, SquareTerminal, X } from "@/components/icons";
+import { Check } from "lucide-react";
+
+import { Hint } from "@/components/Hint";
 import { useComposer } from "@/hooks/useComposer";
 import { useTmuxTarget } from "@/hooks/useTmuxTarget";
 import { getLocale, useLocale } from "@/lib/i18n";
@@ -81,7 +84,16 @@ export function TmuxComposer({ file }: { file: FileEntry }) {
   const { text, textRef, setText, setTextState, inputRef, setStatus, busy, setBusy, voiceSending, attachments } = composer;
   const [interrupting, setInterrupting] = useState(false);
   const [compacting, setCompacting] = useState(false);
+  /* Two-step compact: the first click arms the button, only the second sends
+     /compact — a stray click must never condense a live agent's context. */
+  const [compactArmed, setCompactArmed] = useState(false);
   const [sent, setSent] = useState<SentEntry[]>([]);
+
+  useEffect(() => {
+    if (!compactArmed) return;
+    const timer = window.setTimeout(() => setCompactArmed(false), 4_000);
+    return () => window.clearTimeout(timer);
+  }, [compactArmed]);
 
   /* eslint-disable-next-line react-hooks/set-state-in-effect */
   useEffect(() => setSent(readSent(file.path)), [file.path]);
@@ -301,26 +313,48 @@ export function TmuxComposer({ file }: { file: FileEntry }) {
             </span>
             {!spawnMode ? (
               <>
-                <button
-                  type="button"
-                  aria-label={t("composer.interruptAria")}
-                  title={t("composer.interruptTitle")}
-                  disabled={interrupting}
-                  onClick={() => void interrupt()}
-                  className="inline-flex shrink-0 items-center justify-center rounded-[8px] border border-line bg-panel p-2 text-dim hover:border-err/40 hover:text-err focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-50"
-                >
-                  {interrupting ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Square className="h-4 w-4" fill="currentColor" aria-hidden />}
-                </button>
-                <button
-                  type="button"
-                  aria-label={t("composer.compactAria")}
-                  title={t("composer.compactTitle")}
-                  disabled={compacting}
-                  onClick={() => void compact()}
-                  className="inline-flex shrink-0 items-center justify-center rounded-[8px] border border-line bg-panel p-2 text-dim hover:border-[#0d9488]/50 hover:text-[#0b7c72] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-50"
-                >
-                  {compacting ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <FoldVertical className="h-4 w-4" aria-hidden />}
-                </button>
+                <Hint label={t("composer.interruptTitle")}>
+                  <button
+                    type="button"
+                    aria-label={t("composer.interruptAria")}
+                    disabled={interrupting}
+                    onClick={() => void interrupt()}
+                    className="inline-flex shrink-0 items-center justify-center rounded-[8px] border border-line bg-panel p-2 text-dim hover:border-err/40 hover:text-err focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-50"
+                  >
+                    {interrupting ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Square className="h-4 w-4" fill="currentColor" aria-hidden />}
+                  </button>
+                </Hint>
+                <Hint label={compactArmed ? t("composer.compactConfirmTitle") : t("composer.compactTitle")}>
+                  <button
+                    type="button"
+                    aria-label={compactArmed ? t("composer.compactConfirmTitle") : t("composer.compactAria")}
+                    disabled={compacting}
+                    onClick={() => {
+                      if (!compactArmed) {
+                        setCompactArmed(true);
+                        return;
+                      }
+                      setCompactArmed(false);
+                      void compact();
+                    }}
+                    className={`inline-flex shrink-0 items-center justify-center gap-1 rounded-[8px] border p-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-50 ${
+                      compactArmed
+                        ? "border-[#0d9488] bg-[#e3f4f0] text-[#0b7c72]"
+                        : "border-line bg-panel text-dim hover:border-[#0d9488]/50 hover:text-[#0b7c72]"
+                    }`}
+                  >
+                    {compacting ? (
+                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                    ) : compactArmed ? (
+                      <>
+                        <Check className="h-4 w-4" aria-hidden />
+                        <span className="text-[10.5px] font-bold">{t("composer.compactConfirm")}</span>
+                      </>
+                    ) : (
+                      <FoldVertical className="h-4 w-4" aria-hidden />
+                    )}
+                  </button>
+                </Hint>
               </>
             ) : null}
           </div>

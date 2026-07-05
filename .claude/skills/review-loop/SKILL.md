@@ -75,9 +75,10 @@ From an agent:
   round from `waiting_ready`), `retry-round` (re-run the current round from
   `needs_decision`), `cancel-round` (stop a running reviewer mid-round; the
   flow lands in `needs_decision`), `extend` (+N rounds at the limit),
-  `another-round`, `close`. `advance` and `retry-round` take an optional
-  `note` string delivered to the next reviewer as the round's ready note —
-  use it to steer a re-review after cancelling.
+  `another-round`, `close`, `set-round-limit` (absolute limit via `rounds`,
+  0 = unlimited). `advance` and `retry-round` take an optional `note` string
+  delivered to the next reviewer as the round's ready note — use it to steer
+  a re-review after cancelling.
 - Round artifacts: `~/.claude/viewer-state/flows/<flowId>/round-<n>-review.md`
   — first line `VERDICT: APPROVE | REQUEST_CHANGES | COMMENT`, findings below.
 
