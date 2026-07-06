@@ -7,6 +7,7 @@ import type { LogChunk } from "@/lib/types";
 
 import { LogTailStreamSession, type LogTailStreamEvent } from "./logTailStream";
 
+fs.mkdirSync(ROOTS["codex-sessions"], { recursive: true });
 const SANDBOX = fs.mkdtempSync(path.join(ROOTS["codex-sessions"], "llv-log-tail-stream-test-"));
 
 afterAll(() => {
