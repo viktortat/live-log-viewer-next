@@ -181,7 +181,16 @@ export class LogTailStreamSession {
 
   private async readState(state: TailState, budget: number): Promise<number> {
     const previousOffset = state.offset;
-    const chunk = await this.readTailChunk(state.path, state.offset, budget);
+    let chunk: LogChunk | null;
+    try {
+      chunk = await this.readTailChunk(state.path, state.offset, budget);
+    } catch {
+      if (!this.closed) {
+        state.initial = false;
+        this.onEvent({ id: state.id, chunk: { error: "failed to read log" } });
+      }
+      return 0;
+    }
     if (this.closed) return 0;
     if (!chunk) {
       state.initial = false;

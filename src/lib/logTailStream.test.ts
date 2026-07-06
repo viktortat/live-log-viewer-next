@@ -105,6 +105,36 @@ describe("LogTailStreamSession", () => {
     }
   });
 
+  test("a rejected read reports an error and keeps other subscribers moving", async () => {
+    const events: LogTailStreamEvent[] = [];
+    const session = new LogTailStreamSession(
+      [
+        { id: "bad", path: "bad.log", offset: 0 },
+        { id: "ok", path: "ok.log", offset: 0 },
+      ],
+      {
+        restatMs: 60_000,
+        heartbeatMs: 60_000,
+        readTailChunk: async (pathname) => {
+          if (pathname === "bad.log") throw new Error("rotated during read");
+          return { offset: 4, start: 0, size: 4, data: "ok\n" };
+        },
+        watchFile: () => ({
+          close: () => undefined,
+        }),
+        onEvent: (event) => events.push(event),
+      },
+    );
+    try {
+      session.start();
+      await waitFor(() => events.length >= 2);
+      expect(events.find((event) => event.id === "bad")?.chunk).toEqual({ error: "failed to read log" });
+      expect(events.find((event) => event.id === "ok")?.chunk).toMatchObject({ offset: 4, start: 0, size: 4, data: "ok\n" });
+    } finally {
+      session.close();
+    }
+  });
+
   test("teardown closes watchers and stops timers", async () => {
     const file = writeLog("teardown.log", "ready\n");
     let openCount = 0;
