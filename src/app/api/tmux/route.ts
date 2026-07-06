@@ -10,10 +10,10 @@ import {
   targetForKnownPid,
   type DeliveryOutcome,
 } from "@/lib/delivery";
-import { killTargetAllowed } from "@/lib/resources";
+import { allowedKillTargetPid, consumeKillTarget } from "@/lib/resources";
 import { rejectCrossOrigin } from "@/lib/sameOrigin";
 import { pathAllowed } from "@/lib/scanner/roots";
-import { collectImagePayloads, killPane, liveResumePane } from "@/lib/tmux";
+import { collectImagePayloads, killPane, liveResumePane, panePidOf } from "@/lib/tmux";
 import type { ApiError } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -81,14 +81,24 @@ export async function POST(req: NextRequest): Promise<NextResponse<SendResponse 
   /* Orphan-session cleanup: kills a pane by tmux target instead of a
      transcript path. Only targets from the last /api/resources snapshot are
      accepted (server-held allowlist) — an arbitrary client-named pane, e.g.
-     the user's own work shell, is refused. */
+     the user's own work shell, is refused. The coordinates are additionally
+     re-verified against the snapshot's pane pid right before the kill, and
+     consumed afterwards: tmux renumbers `session:window.pane` targets as
+     windows close, so stale coordinates (or a repeated POST) could otherwise
+     kill a different pane than the one the panel showed. */
   if (body.action === "kill-target") {
     const target = typeof body.target === "string" ? body.target : "";
-    if (!killTargetAllowed(target)) {
+    const snapshotPid = allowedKillTargetPid(target);
+    if (snapshotPid === null) {
       return NextResponse.json({ error: "невідома ціль — онови список ресурсів" }, { status: 400 });
+    }
+    if ((await panePidOf(target)) !== snapshotPid) {
+      consumeKillTarget(target);
+      return NextResponse.json({ error: "пейн уже змінився — онови список ресурсів" }, { status: 409 });
     }
     try {
       await killPane(target);
+      consumeKillTarget(target);
       return NextResponse.json({ ok: true, target });
     } catch (error) {
       return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });

@@ -296,6 +296,18 @@ export async function sendInterrupt(target: TmuxTarget): Promise<void> {
 }
 
 /**
+ * Current shell pid of the pane at `target`, or null when no such pane exists.
+ * Used to re-verify a pane's identity right before killing it by display
+ * coordinates — tmux renumbers `session:window.pane` targets as windows close,
+ * so coordinates recorded earlier may point at a different pane by kill time.
+ */
+export async function panePidOf(target: TmuxTarget): Promise<number | null> {
+  const res = await runTmux(["display-message", "-p", "-t", target, "#{pane_pid}"]).catch(() => null);
+  const pid = res && res.code === 0 ? Number(res.stdout.trim()) : NaN;
+  return Number.isInteger(pid) && pid > 0 ? pid : null;
+}
+
+/**
  * Kills the tmux pane hosting a conversation's agent. The window goes with it
  * when this was its only pane — the case for every window the viewer spawns.
  */

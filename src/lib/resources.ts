@@ -18,20 +18,33 @@ const CACHE_MS = 10_000;
 
 const globalStore = globalThis as unknown as {
   __llvResourcesCache?: { at: number; data: ResourcesPayload } | null;
-  __llvResourceTargets?: Set<string>;
+  __llvResourceTargets?: Map<string, number>;
 };
 
 /**
  * Server-held allowlist for the kill-target action: only pane targets present
  * in the last resources snapshot may be killed, never a client-supplied
- * arbitrary target (which could name the user's own work pane).
+ * arbitrary target (which could name the user's own work pane). Each target
+ * keeps the pane pid it had in the snapshot so the kill path can verify the
+ * coordinates still name the same pane — tmux renumbers `session:window.pane`
+ * as windows close.
  */
-export function noteSessionTargets(targets: Iterable<string>): void {
-  globalStore.__llvResourceTargets = new Set(targets);
+export function noteSessionTargets(sessions: Iterable<{ target: string; panePid: number }>): void {
+  const map = new Map<string, number>();
+  for (const { target, panePid } of sessions) map.set(target, panePid);
+  globalStore.__llvResourceTargets = map;
 }
 
-export function killTargetAllowed(target: string): boolean {
-  return target !== "" && (globalStore.__llvResourceTargets?.has(target) ?? false);
+/** Snapshot pane pid recorded for `target`, or null when it was never listed. */
+export function allowedKillTargetPid(target: string): number | null {
+  if (target === "") return null;
+  return globalStore.__llvResourceTargets?.get(target) ?? null;
+}
+
+/** Drops `target` from the allowlist after a kill: the coordinates are free
+    for tmux to reuse, so a repeated POST must not pass the gate again. */
+export function consumeKillTarget(target: string): void {
+  globalStore.__llvResourceTargets?.delete(target);
 }
 
 function isoFromUnix(seconds: number): string {
@@ -105,7 +118,7 @@ async function buildResources(): Promise<ResourcesPayload> {
     sessions.sort((a, b) => b.rssBytes + b.swapBytes - (a.rssBytes + a.swapBytes));
   }
 
-  noteSessionTargets(sessions.map((session) => session.target));
+  noteSessionTargets(sessions);
   return {
     system: system ? { ...system, capturedAt } : null,
     sessions,
