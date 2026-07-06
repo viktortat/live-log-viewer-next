@@ -58,7 +58,7 @@ Everything the UI does is plain HTTP against the local server:
   headless process or the reviewer pane) and parks the round in
   `needs_decision`; `set-round-limit` sets the absolute limit via `rounds`
   (0 = unlimited, never below the rounds already run). In the UI these are
-  the «Стоп» button, the note field and the 1–5/∞ limit picker on the flow
+  the “Stop” button, the note field and the 1–5/∞ limit picker on the flow
   strip. `close` also stops a still-running reviewer, so the strip's ✕ is a
   one-click teardown of the reviewer side; the UI applies it optimistically.
 

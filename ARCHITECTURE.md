@@ -146,10 +146,10 @@ cards stacked under their nearest displayed ancestor, wired with a dashed
 connector (click opens the branch as a full node; stacks over 8 rows scroll
 internally). The rest of the quiet history — bash tasks, codex job logs,
 compaction-chain predecessors — lies "under" the conversation as a deck
-(`N під сподом`) that expands into a chip list.
+(`N underneath`) that expands into a chip list.
 
-Navigation: «рука» (H, or hold Space — panes become click-through, touch
-gets `touch-action: none` so one finger pans) and «виділення» (V — normal
+Navigation: the hand tool (H, or hold Space — panes become click-through, touch
+gets `touch-action: none` so one finger pans) and the selection tool (V — normal
 interaction, click selects a node). The chosen tool persists in
 `llvSchemeMode`; a coarse-pointer device without a saved tool starts on the
 hand. Plain wheel pans (shift — horizontally), ctrl/cmd+wheel and two-finger
@@ -243,31 +243,31 @@ optimizations the prototype does; never re-read unchanged files.
 
 ## Client (src/components + hooks)
 
-- `Sidebar` — search, «Дерево / Стрічка» toggle (persisted), project groups,
+- `Sidebar` — search, “Tree / Feed” toggle (persisted), project groups,
   virtual-friendly plain rendering is fine (400 rows max).
 - `FileRow` — type icon (✳ session-claude / ⤷ subagent / ⌘ codex session /
   ⚙ codex job / ❯ bash task), title, chips: model, kind, project (flat mode
-  only), activity (`працює` pulsing green / `закінчив` amber), age · size.
+  only), activity (`working` pulsing green / `finished` amber), age · size.
   Non-conversation rows (jobs, bash tasks) are "aux": mono font, dimmed,
   1-line clamp, tighter padding.
 - `LogFeed` — poll `/api/log` every 1.2 s with a generation token (no stale
   chunk races), partial-line buffer, 2500-node cap, follow-mode autoscroll that
   auto-disables when the user scrolls up and re-enables at bottom, placeholders
-  («Завантаження…», «Ще без виводу — файл поки порожній»).
+  (“Loading…”, “No output yet — the file is empty for now”).
 - Renderers (port 1:1 from prototype): `renderClaude`, `renderCodex`,
   `renderPlain` — user bubbles, assistant prose (dedupe consecutive identical),
-  cmd cards with ✓ ok / ✗ exit N / ✗ помилка statuses (tool_result arrival =
-  finished; use is_error), edit cards, service lines behind «Службові» toggle,
+  cmd cards with ✓ ok / ✗ exit N / ✗ error statuses (tool_result arrival =
+  finished; use is_error), edit cards, service lines behind a “Service” toggle,
   line filter input.
 - `TaskHeader` — pinned card for claude-tasks files: description + `$ command`,
-  or explicit «Команду … не знайдено у транскриптах сесії».
+  or explicit “The command … wasn't found in the session transcripts”.
 - Header bar: engine badge + model chip + kind + title (path in tooltip),
-  Follow / Пауза / Службові buttons, status (size · time).
+  Follow / Pause / Service buttons, status (size · time).
 
 ## Sorting and collapsing — THE PART THE USER CARES ABOUT MOST
 
 Tree mode:
-1. Project groups: **stable alphabetical order** (uk locale). Groups NEVER
+1. Project groups: **stable alphabetical order** (locale-aware). Groups NEVER
    reorder because of activity.
 2. Inside an expanded project: roots AND children sorted by **subtree
    last-update DESC** — the freshest item is always on top within a project.
@@ -282,7 +282,7 @@ Tree mode:
      live item is hidden inside);
    - active search temporarily expands everything that matches.
 
-Flat mode («Стрічка»): single global list by mtime DESC, no group headers,
+Flat mode (“Feed”): single global list by mtime DESC, no group headers,
 project chip + model chip on every row.
 
 ## State persistence (localStorage)

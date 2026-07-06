@@ -170,17 +170,17 @@ mints a short-lived single-use token and only that token reaches the browser.
 
 | Symptom (message in the UI)                              | Cause                                                            | Fix                                                                 |
 | -------------------------------------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------- |
-| "немає доступу до мікрофона" (no microphone access)      | Browser denied microphone permission.                           | Grant mic permission for the site and retry.                        |
-| "сервер недоступний" (server unavailable)                | The `/api/transcribe` request failed to reach the server.       | Check the app is running and reachable.                             |
-| "тиша — нічого не розпізналось" (silence, nothing heard) | Recording contained no recognisable speech.                     | Speak up / check the mic; the input-level meter should move.        |
-| "аудіо завелике (ліміт 16 МБ)" (audio too large)         | Upload exceeded the 16 MB cap.                                  | Record a shorter clip (the 2-minute auto-stop normally prevents this). |
+| "no microphone access"                                   | Browser denied microphone permission.                           | Grant mic permission for the site and retry.                        |
+| "server unavailable"                                     | The `/api/transcribe` request failed to reach the server.       | Check the app is running and reachable.                             |
+| "silence — nothing recognized"                           | Recording contained no recognisable speech.                     | Speak up / check the mic; the input-level meter should move.        |
+| "audio too large (16 MB limit)"                          | Upload exceeded the 16 MB cap.                                  | Record a shorter clip (the 2-minute auto-stop normally prevents this). |
 | Error mentioning `scripts/setup-whisper.sh`              | Local backend selected but the whisper venv/Python is missing.  | Run `scripts/setup-whisper.sh`.                                     |
-| "faster-whisper відсутній…" (faster-whisper missing)     | The venv exists but `faster-whisper` is not installed in it.    | Re-run `scripts/setup-whisper.sh`.                                  |
-| "нема ChatGPT-токена Codex (~/.codex/auth.json)…"        | ChatGPT backend selected but no Codex login found.              | Log in with Codex, then retry.                                      |
-| "ChatGPT-токен протух…" (ChatGPT token expired)          | The stored Codex token is stale.                                | Open Codex so it refreshes the token, then retry.                   |
-| "нема ключа ElevenLabs…" (no ElevenLabs key)             | ElevenLabs backend selected but no key found.                   | Set `ELEVENLABS_API_KEY` or write the key file (see above).         |
-| "live-транскрипція доступна лише з бекендом elevenlabs"  | Live token requested while another backend is active.           | Expected — the client falls back to batch automatically.            |
+| "faster-whisper missing…"                                | The venv exists but `faster-whisper` is not installed in it.    | Re-run `scripts/setup-whisper.sh`.                                  |
+| "no Codex ChatGPT token (~/.codex/auth.json)…"           | ChatGPT backend selected but no Codex login found.              | Log in with Codex, then retry.                                      |
+| "ChatGPT token expired…"                                 | The stored Codex token is stale.                                | Open Codex so it refreshes the token, then retry.                   |
+| "no ElevenLabs key…"                                     | ElevenLabs backend selected but no key found.                   | Set `ELEVENLABS_API_KEY` or write the key file (see above).         |
+| "live transcription is only available with the elevenlabs backend" | Live token requested while another backend is active. | Expected — the client falls back to batch automatically.            |
 
 Cloud backends surface upstream HTTP errors verbatim (for example
-`ElevenLabs STT: HTTP 401 …` or `бекенд транскрипції: HTTP 5xx`), which usually
+`ElevenLabs STT: HTTP 401 …` or `transcription backend: HTTP 5xx`), which usually
 point to an invalid key, an expired token, or a quota limit.
