@@ -8,7 +8,9 @@ import type { BoardTask } from "@/lib/tasks/types";
 import type { FileEntry } from "@/lib/types";
 
 import { useLinkDrag } from "@/components/AgentLink";
+import { ReasoningControls, type SpeedChoice } from "@/components/ReasoningControls";
 import { TargetChecklist } from "@/components/tasks/TargetChecklist";
+import type { SpawnAgentInput } from "@/components/tasks/taskApi";
 import { pushTaskToast } from "@/components/tasks/taskToast";
 import { nextTaskStatus, TASK_TONES, taskTitle } from "@/components/tasks/taskModel";
 import { activityDot, cleanTitle, engineBadge } from "@/components/utils";
@@ -38,7 +40,7 @@ export interface TaskCardHandlers {
   patch: (id: string, patch: { text?: string; status?: BoardTask["status"]; pos?: { x: number; y: number } }) => Promise<string | null>;
   remove: (id: string) => void;
   send: (task: BoardTask, paths: string[]) => void;
-  spawn: (task: BoardTask, engine: "claude" | "codex", cwd: string) => Promise<string | null>;
+  spawn: (task: BoardTask, input: SpawnAgentInput) => Promise<string | null>;
   center: (rect: SchemeRect) => void;
   /** Currently selected conversation paths — «надіслати» targets them directly. */
   selectionPaths: () => string[];
@@ -163,15 +165,23 @@ function SpawnPopover({
   onClose,
 }: {
   task: BoardTask;
-  onSpawn: (task: BoardTask, engine: "claude" | "codex", cwd: string) => Promise<string | null>;
+  onSpawn: (task: BoardTask, input: SpawnAgentInput) => Promise<string | null>;
   onClose: () => void;
 }) {
   const { t } = useLocale();
-  const [engine, setEngine] = useState<"claude" | "codex">("claude");
+  const [engine, setEngineState] = useState<"claude" | "codex">("claude");
   const [cwd, setCwd] = useState("");
+  const [effort, setEffort] = useState("");
+  const [speed, setSpeed] = useState<SpeedChoice>("");
   const [dirs, setDirs] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const setEngine = (value: "claude" | "codex") => {
+    setEngineState(value);
+    /* Tier lists differ per engine — a carried-over invalid tier would 400. */
+    setEffort("");
+  };
 
   /* First assignee's cwd ranks top in the suggestions. */
   useEffect(() => {
@@ -194,7 +204,12 @@ function SpawnPopover({
     if (busy || !cwd.trim()) return;
     setBusy(true);
     setError(null);
-    const failure = await onSpawn(task, engine, cwd.trim());
+    const failure = await onSpawn(task, {
+      engine,
+      cwd: cwd.trim(),
+      ...(effort ? { effort } : {}),
+      ...(engine === "codex" && speed ? { fast: speed === "fast" } : {}),
+    });
     setBusy(false);
     if (failure) setError(failure);
     else onClose();
@@ -237,6 +252,9 @@ function SpawnPopover({
           <option key={dir} value={dir} />
         ))}
       </datalist>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <ReasoningControls engine={engine} effort={effort} speed={speed} disabled={busy} onEffort={setEffort} onSpeed={setSpeed} />
+      </div>
       {error ? <span className="text-[10.5px] font-semibold text-err">{error}</span> : null}
       <div className="flex items-center justify-end gap-1">
         <button
@@ -339,9 +357,9 @@ export const TaskCard = memo(function TaskCard({
     if (deliveryBlocked()) return;
     handlers.send(target, paths);
   };
-  const guardedSpawn = async (target: BoardTask, engine: "claude" | "codex", cwd: string): Promise<string | null> => {
+  const guardedSpawn = async (target: BoardTask, input: SpawnAgentInput): Promise<string | null> => {
     if (deliveryBlocked()) return t("tasks.emptyTextBlocked");
-    return handlers.spawn(target, engine, cwd);
+    return handlers.spawn(target, input);
   };
 
   const beginEdit = () => {

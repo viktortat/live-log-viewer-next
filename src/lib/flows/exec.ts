@@ -154,6 +154,7 @@ export function reviewerCommand(
       "Edit,Write,NotebookEdit",
     ];
     if (role.model) args.push("--model", role.model);
+    if (role.effort) args.push("--effort", role.effort);
     return { command: resolveBinary("claude"), args, outputPath: null, sessionId, reviewerPath: claudeTranscriptPath(cwd, sessionId) };
   }
   /* --json turns stdout into a JSONL event stream whose first events carry

@@ -443,8 +443,8 @@ export function SchemeBoard({
         });
       },
       send: (task, paths) => void handleSendById(task.id, paths),
-      spawn: async (task, engine, cwd) => {
-        const res = await spawnTaskAgent(task.id, { engine, cwd });
+      spawn: async (task, input) => {
+        const res = await spawnTaskAgent(task.id, input);
         if ("error" in res) return res.error;
         pushTaskToast("ok", translate(getLocale(), "tasks.spawnOk", { target: res.target }));
         return null;

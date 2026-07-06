@@ -7,7 +7,7 @@ export type FlowEngine = "claude" | "codex";
 export type RoleConfig = {
   engine: FlowEngine;
   model: string | null; // null = engine default
-  effort: string | null; // null = engine default; codex: low|medium|high|xhigh
+  effort: string | null; // null = engine default; codex: low|medium|high|xhigh, claude: low|medium|high|xhigh|max
 };
 
 export type FlowRoleKey = "implementer" | "reviewer";

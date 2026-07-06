@@ -130,12 +130,18 @@ export async function sendTask(id: string, paths: string[]): Promise<TaskSendRes
   return res.ok ? res.data : { error: res.error };
 }
 
+/** Everything a fresh task agent can be launched with; effort/fast omitted
+    means the CLI keeps its own defaults. */
+export interface SpawnAgentInput {
+  engine: "claude" | "codex";
+  cwd: string;
+  effort?: string;
+  fast?: boolean;
+}
+
 /** Spawns an agent with the task text as the brief; same stale-text guard
     as sendTask, since the server reads the persisted text as the prompt. */
-export async function spawnTaskAgent(
-  id: string,
-  input: { engine: "claude" | "codex"; cwd: string },
-): Promise<TaskSpawnResult | { error: string }> {
+export async function spawnTaskAgent(id: string, input: SpawnAgentInput): Promise<TaskSpawnResult | { error: string }> {
   const textError = await pendingTextError(id);
   if (textError) return { error: textError };
   const res = await request<TaskSpawnResult>(`/api/tasks/${encodeURIComponent(id)}/spawn`, "POST", input);

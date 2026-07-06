@@ -5,6 +5,7 @@ import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
 
 import { freshSpecFor, type AgentEngine } from "@/lib/agent/cli";
+import { reasoningFromBody } from "@/lib/agent/efforts";
 import { headCwd } from "@/lib/agent/transcript";
 import { persistHandoffLineage, rememberHandoffChild, rememberHandoffPane } from "@/lib/handoffLineage";
 import { rejectCrossOrigin } from "@/lib/sameOrigin";
@@ -82,15 +83,18 @@ export async function POST(req: NextRequest): Promise<NextResponse<SpawnResponse
   const rejection = rejectCrossOrigin(req);
   if (rejection) return rejection;
 
-  let body: { engine?: unknown; cwd?: unknown; prompt?: unknown; images?: unknown; src?: unknown };
+  let body: { engine?: unknown; cwd?: unknown; prompt?: unknown; images?: unknown; src?: unknown; effort?: unknown; fast?: unknown };
   try {
-    body = (await req.json()) as { engine?: unknown; cwd?: unknown; prompt?: unknown; images?: unknown; src?: unknown };
+    body = (await req.json()) as typeof body;
   } catch {
     return NextResponse.json({ error: "некоректний JSON" }, { status: 400 });
   }
 
   const engine = body.engine === "claude" || body.engine === "codex" ? (body.engine as AgentEngine) : null;
   if (!engine) return NextResponse.json({ error: "engine має бути claude або codex" }, { status: 400 });
+
+  const reasoning = reasoningFromBody(engine, body);
+  if (reasoning.error) return NextResponse.json({ error: reasoning.error }, { status: 400 });
 
   const rawCwd = typeof body.cwd === "string" ? body.cwd.trim() : "";
   if (!rawCwd) return NextResponse.json({ error: "потрібна робоча директорія" }, { status: 400 });
@@ -119,7 +123,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<SpawnResponse
        appended to its first prompt — the same contract the pane composer uses. */
     const bundle = buildImagePayload(prompt, images);
     imagePaths = bundle.imagePaths;
-    const spec = freshSpecFor(engine, cwd);
+    const spec = freshSpecFor(engine, cwd, { effort: reasoning.effort, fast: reasoning.fast });
     const pane = await spawnAgentWithPrompt(spec, bundle.payload);
     /* Handoff spawn: remember which conversation the new agent descends from,
        so the scanner links its transcript into the source's tree. A claude

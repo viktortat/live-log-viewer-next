@@ -5,6 +5,8 @@ import path from "node:path";
 
 import { claudeTranscriptPath, headCwd } from "./transcript";
 
+export { ENGINE_EFFORTS, isEngineEffort } from "./efforts";
+
 /**
  * The one home for "how do we start an agent CLI": binary resolution, shell
  * quoting, and the boot/resume command specs for both engines. Flag changes
@@ -54,6 +56,9 @@ export interface ResumeSpec {
 export interface FreshSpecOptions {
   model?: string | null;
   effort?: string | null;
+  /** Codex only: true → `service_tier=priority` ("Fast" in the TUI), false →
+      `service_tier=standard`; unset leaves the user's config.toml default. */
+  fast?: boolean | null;
   readOnly?: boolean;
 }
 
@@ -74,6 +79,7 @@ export function freshSpecFor(engine: AgentEngine, cwd: string, options: FreshSpe
     else args.push("--dangerously-skip-permissions");
     args.push("--session-id", sid);
     if (options.model) args.push("--model", options.model);
+    if (options.effort) args.push("--effort", options.effort);
     return {
       command: args.map(shellQuote).join(" "),
       cwd,
@@ -84,6 +90,7 @@ export function freshSpecFor(engine: AgentEngine, cwd: string, options: FreshSpe
   const args = [resolveBinary("codex")];
   if (options.model) args.push("-m", options.model);
   if (options.effort) args.push("-c", `model_reasoning_effort=${options.effort}`);
+  if (options.fast != null) args.push("-c", `service_tier=${options.fast ? "priority" : "standard"}`);
   if (options.readOnly) args.push("--sandbox", "read-only");
   return { command: args.map(shellQuote).join(" "), cwd, windowName: "codex-new" };
 }

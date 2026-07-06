@@ -2,11 +2,10 @@
 
 import { useEffect, useState } from "react";
 
+import { ENGINE_EFFORTS } from "@/lib/agent/efforts";
 import type { FlowPreset, FlowsResponse, RoleConfig } from "@/lib/flows/types";
 import { useLocale } from "@/lib/i18n";
 import type { FileEntry } from "@/lib/types";
-
-const EFFORTS = ["low", "medium", "high", "xhigh"] as const;
 
 const FALLBACK_ROLES: Record<"implementer" | "reviewer", RoleConfig> = {
   implementer: { engine: "claude", model: null, effort: null },
@@ -42,21 +41,19 @@ function RoleEditor({
         className="h-7 w-0 min-w-0 flex-1 rounded-[8px] border border-line bg-bg px-1.5 font-mono text-[11px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
         onChange={(event) => onChange({ ...role, model: event.target.value.trim() || null })}
       />
-      {role.engine === "codex" ? (
-        <select
-          value={role.effort ?? ""}
-          aria-label={`Reasoning effort: ${label}`}
-          className="h-7 rounded-[8px] border border-line bg-bg px-1.5 text-[11.5px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-          onChange={(event) => onChange({ ...role, effort: event.target.value || null })}
-        >
-          <option value="">{t("flowDialog.effortDefault")}</option>
-          {EFFORTS.map((effort) => (
-            <option key={effort} value={effort}>
-              {effort}
-            </option>
-          ))}
-        </select>
-      ) : null}
+      <select
+        value={role.effort ?? ""}
+        aria-label={`Reasoning effort: ${label}`}
+        className="h-7 rounded-[8px] border border-line bg-bg px-1.5 text-[11.5px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+        onChange={(event) => onChange({ ...role, effort: event.target.value || null })}
+      >
+        <option value="">{t("flowDialog.effortDefault")}</option>
+        {ENGINE_EFFORTS[role.engine].map((effort) => (
+          <option key={effort} value={effort}>
+            {effort}
+          </option>
+        ))}
+      </select>
     </div>
   );
 }

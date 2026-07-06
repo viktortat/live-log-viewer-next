@@ -5,6 +5,7 @@ import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
 
 import { freshSpecFor, type AgentEngine } from "@/lib/agent/cli";
+import { reasoningFromBody } from "@/lib/agent/efforts";
 import { rejectCrossOrigin } from "@/lib/sameOrigin";
 import { applyAssignmentPatches, type AssignmentPatch } from "@/lib/tasks/commands";
 import { isoNow } from "@/lib/tasks/helpers";
@@ -46,15 +47,18 @@ export async function POST(req: NextRequest, ctx: TaskRouteContext): Promise<Nex
   const rejection = rejectCrossOrigin(req);
   if (rejection) return rejection;
 
-  let body: { engine?: unknown; cwd?: unknown };
+  let body: { engine?: unknown; cwd?: unknown; effort?: unknown; fast?: unknown };
   try {
-    body = (await req.json()) as { engine?: unknown; cwd?: unknown };
+    body = (await req.json()) as typeof body;
   } catch {
     return NextResponse.json({ error: "некоректний JSON" }, { status: 400 });
   }
 
   const engine = body.engine === "claude" || body.engine === "codex" ? (body.engine as AgentEngine) : null;
   if (!engine) return NextResponse.json({ error: "engine має бути claude або codex" }, { status: 400 });
+
+  const reasoning = reasoningFromBody(engine, body);
+  if (reasoning.error) return NextResponse.json({ error: reasoning.error }, { status: 400 });
   const cwdResult = cwdFromBody(body.cwd);
   if (!cwdResult.cwd) return NextResponse.json({ error: cwdResult.error ?? "некоректна робоча директорія" }, { status: cwdResult.status ?? 400 });
 
@@ -63,7 +67,7 @@ export async function POST(req: NextRequest, ctx: TaskRouteContext): Promise<Nex
   if (!task) return NextResponse.json({ error: "задачу не знайдено" }, { status: 404 });
 
   try {
-    const spec = freshSpecFor(engine, cwdResult.cwd);
+    const spec = freshSpecFor(engine, cwdResult.cwd, { effort: reasoning.effort, fast: reasoning.fast });
     const pane = await spawnAgentWithPrompt(spec, task.text);
     const at = isoNow();
     let patch: AssignmentPatch;

@@ -4,10 +4,12 @@ import { useEffect, useRef, useState } from "react";
 
 import { Loader2, Play, X } from "@/components/icons";
 import { useComposer } from "@/hooks/useComposer";
+import { isEngineEffort } from "@/lib/agent/efforts";
 import { useLocale } from "@/lib/i18n";
 import type { FileEntry } from "@/lib/types";
 
 import { ComposerBar } from "./ComposerBar";
+import { ReasoningControls, type SpeedChoice } from "./ReasoningControls";
 import { cleanTitle, engineTintOf } from "./utils";
 
 type Engine = "claude" | "codex";
@@ -44,7 +46,7 @@ function writeField(id: string, name: string, value: string) {
 
 /** Everything a draft keeps in sessionStorage; called when the draft leaves the scheme. */
 export function clearDraftStorage(id: string) {
-  for (const name of ["engine", "cwd", "text", "boot", "src"]) sessionStorage.removeItem(field(id, name));
+  for (const name of ["engine", "cwd", "text", "boot", "src", "effort", "speed"]) sessionStorage.removeItem(field(id, name));
 }
 
 /** Source transcript a handoff draft continues; empty for a plain draft. */
@@ -97,6 +99,11 @@ export function DraftAgentPane({
     return srcFile?.engine === "codex" ? "codex" : "claude";
   });
   const [cwd, setCwdState] = useState(() => readField(draftId, "cwd"));
+  const [effort, setEffortState] = useState(() => readField(draftId, "effort"));
+  const [speed, setSpeedState] = useState<SpeedChoice>(() => {
+    const stored = readField(draftId, "speed");
+    return stored === "fast" || stored === "standard" ? stored : "";
+  });
   const [dirs, setDirs] = useState<string[]>([]);
   const [boot, setBootState] = useState<Boot | null>(() => readBoot(draftId));
   const [slowBoot, setSlowBoot] = useState(false);
@@ -105,9 +112,20 @@ export function DraftAgentPane({
      a reload the mtime cutoff alone carries the match. */
   const knownRef = useRef<Set<string> | null>(null);
 
+  const setEffort = (value: string) => {
+    setEffortState(value);
+    writeField(draftId, "effort", value);
+  };
+  const setSpeed = (value: SpeedChoice) => {
+    setSpeedState(value);
+    writeField(draftId, "speed", value);
+  };
   const setEngine = (value: Engine) => {
     setEngineState(value);
     writeField(draftId, "engine", value);
+    /* Tier lists differ per engine (claude has "max", codex does not) — a
+       carried-over invalid tier falls back to the CLI default. */
+    if (effort && !isEngineEffort(value, effort)) setEffort("");
   };
   const setCwd = (value: string) => {
     setCwdState(value);
@@ -200,6 +218,8 @@ export function DraftAgentPane({
         body: JSON.stringify({
           engine,
           cwd: cwd.trim(),
+          ...(effort ? { effort } : {}),
+          ...(engine === "codex" && speed ? { fast: speed === "fast" } : {}),
           prompt: payloadText,
           images: attachments.images.map((image) => ({ base64: image.base64, mime: image.mime })),
           /* Ties the fresh agent to the source conversation: the scanner links
@@ -289,6 +309,11 @@ export function DraftAgentPane({
             <option key={dir} value={dir} />
           ))}
         </datalist>
+      </div>
+
+      <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-line bg-[#fbfbfd] px-2.5 py-1.5">
+        <span className="shrink-0 text-[10px] font-semibold text-dim">{t("draft.reasoning")}</span>
+        <ReasoningControls engine={engine} effort={effort} speed={speed} disabled={fieldsDisabled} onEffort={setEffort} onSpeed={setSpeed} />
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 py-4">
