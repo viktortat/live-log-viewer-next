@@ -7,7 +7,7 @@
  * right speaker, so the ear finds the column the eye should jump to.
  */
 
-export type ChimeKind = "waiting" | "returned" | "stalled" | "question";
+export type ChimeKind = "waiting" | "returned" | "stalled" | "question" | "spawned";
 
 const SOUND_KEY = "llvSound";
 
@@ -92,7 +92,8 @@ interface Note {
 }
 
 /* Each state gets its own melodic gesture: rising = your move, a little
-   arpeggio = a branch came home, falling = something got stuck. */
+   arpeggio = a branch came home, falling = something got stuck, a quick
+   low blip up = a new agent joined the tree. */
 const TUNES: Record<ChimeKind, Note[]> = {
   waiting: [
     { freq: 784, at: 0, dur: 0.5 }, // G5
@@ -111,6 +112,10 @@ const TUNES: Record<ChimeKind, Note[]> = {
     { freq: 1047, at: 0, dur: 0.28 }, // C6
     { freq: 1319, at: 0.12, dur: 0.35 }, // E6
     { freq: 1568, at: 0.24, dur: 0.6 }, // G6
+  ],
+  spawned: [
+    { freq: 523, at: 0, dur: 0.14 }, // C5
+    { freq: 784, at: 0.06, dur: 0.4 }, // G5
   ],
 };
 
