@@ -73,16 +73,19 @@ function entriesByPid(entries: FileEntry[]): Map<number, FileEntry> {
   return byPid;
 }
 
-async function buildResources(): Promise<ResourcesPayload> {
+/** `fresh` skips the pane/agent-process memos too, all the way down: a
+    rebuild triggered right after a kill would otherwise read 5s-old caches
+    and re-list (and re-allowlist) the session that was just killed. */
+async function buildResources(fresh: boolean): Promise<ResourcesPayload> {
   const capturedAt = new Date().toISOString();
   const system = procBackend.systemMemory();
 
-  const panes = await panePidMap();
+  const panes = await panePidMap(fresh);
   const sessions: ResourceSession[] = [];
   if (panes.size > 0) {
     const ppids = procBackend.ppidMap();
     const agentEngine = new Map<number, AgentEngine>();
-    for (const proc of agentProcesses()) agentEngine.set(proc.pid, proc.engine);
+    for (const proc of agentProcesses(fresh)) agentEngine.set(proc.pid, proc.engine);
     const byPid = entriesByPid(await listFiles());
 
     /* Trees first, memory second: one processMemory() batch over the union
@@ -142,7 +145,7 @@ async function buildResources(): Promise<ResourcesPayload> {
 export async function readResources(fresh = false): Promise<ResourcesPayload> {
   const cached = globalStore.__llvResourcesCache;
   if (!fresh && cached && Date.now() - cached.at < CACHE_MS) return cached.data;
-  const data = await buildResources();
+  const data = await buildResources(fresh);
   globalStore.__llvResourcesCache = { at: Date.now(), data };
   return data;
 }

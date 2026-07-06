@@ -106,10 +106,12 @@ function runTmux(args: string[], input?: Buffer | string): Promise<RunResult> {
   });
 }
 
-/** pane_pid → pane map from `tmux list-panes -a`, memoised for a few seconds. */
-export async function panePidMap(): Promise<Map<number, PaneRef>> {
+/** pane_pid → pane map from `tmux list-panes -a`, memoised for a few seconds.
+    `fresh` bypasses the memo — a rebuild right after a kill must observe the
+    pane's absence immediately, or the killed session ghosts back in. */
+export async function panePidMap(fresh = false): Promise<Map<number, PaneRef>> {
   const now = Date.now();
-  if (paneMemo && now - paneMemo.at < PANE_MAP_TTL_MS) return paneMemo.map;
+  if (!fresh && paneMemo && now - paneMemo.at < PANE_MAP_TTL_MS) return paneMemo.map;
 
   const map = new Map<number, PaneRef>();
   let result: RunResult;
