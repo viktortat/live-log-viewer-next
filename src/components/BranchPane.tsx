@@ -124,72 +124,78 @@ export function BranchPane({ file, files, tasks, onSelect, isRoot, onClose, drag
         } ${tone.section}`}
         style={state === "done" ? { borderTopColor: "#c9c9d1" } : engineEdge(file)}
       >
+        {/* Two deliberate rows: identity + actions on top (the close X pinned
+            to the corner at every width), the metadata chips below. */}
         <header
-          className={`flex min-h-10 shrink-0 flex-wrap items-center gap-x-1.5 gap-y-1 border-b border-line px-2.5 py-1 ${tone.header} ${
+          className={`flex shrink-0 flex-col gap-y-1 border-b border-line px-2.5 py-1.5 ${tone.header} ${
             dragHandle ? "cursor-grab active:cursor-grabbing" : ""
           }`}
           {...dragHandle}
         >
-          <span className={`h-2 w-2 shrink-0 rounded-full ${activityDot(file.activity)}`} title={t(`branch.${state}`)} />
-          <LastActivity file={file} />
-          {/* One identity chip: the model when known (engine lives in the tint
-              and the tooltip), the engine label as fallback. */}
-          {file.model ? (
-            <span
-              className="shrink-0 rounded-full px-1.5 py-0.5 font-mono text-[9.5px] font-semibold"
-              style={{ backgroundColor: effortTint(file).soft, color: effortTint(file).color }}
-              title={[badge.label, effortTitle(file)].filter(Boolean).join(" · ")}
-            >
-              {file.model}
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span className={`h-2 w-2 shrink-0 rounded-full ${activityDot(file.activity)}`} title={t(`branch.${state}`)} />
+            <span className="min-w-0 flex-1 truncate text-[12px] font-semibold" title={cleanTitle(file.title)}>
+              {cleanTitle(file.title, 90)}
             </span>
-          ) : (
-            <span className="inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[10px] font-bold" style={badge.style}>
-              {badge.label}
-            </span>
-          )}
-          {file.ctx ? <CtxChip ctx={file.ctx} /> : null}
-          {file.worktree ? (
-            <span
-              className="inline-flex shrink-0 items-center gap-0.5 rounded-full border border-line/80 px-1.5 py-0.5 font-mono text-[9.5px] text-dim"
-              title={t("branch.worktree", { name: file.worktree })}
-            >
-              <GitBranch className="h-2.5 w-2.5" aria-hidden /> {file.worktree}
-            </span>
-          ) : null}
-          {file.plan ? <PlanChip plan={file.plan} /> : null}
-          {file.goal ? <GoalChip goal={file.goal} /> : null}
-          {isRoot ? null : (
-            <span
-              className="inline-flex shrink-0 items-center gap-0.5 text-[10px] text-dim"
-              title={file.handoff ? t("branch.handoffTitle") : t("branch.branchTitle")}
-            >
-              <CornerDownRight className="h-3 w-3" aria-hidden /> {file.handoff ? t("kind.handoff") : kindLabel(t, file.kind)}
-            </span>
-          )}
-          <span className="min-w-24 flex-1 truncate text-[12px] font-semibold" title={cleanTitle(file.title)}>
-            {cleanTitle(file.title, 90)}
-          </span>
-          <ProcessStatusControls file={file} compact />
-          {onToggleExpand ? (
-            <button
-              className="inline-flex shrink-0 items-center rounded-[8px] border border-line bg-bg px-1.5 py-0.5 text-dim hover:border-accent/45 hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-              aria-label={expanded ? t("branch.collapseFull") : t("branch.expandFull", { title: cleanTitle(file.title, 60) })}
-              title={expanded ? t("branch.collapseFull") : t("branch.expandFull", { title: cleanTitle(file.title, 60) })}
-              onClick={onToggleExpand}
-            >
-              {expanded ? <Minimize2 className="h-3 w-3" aria-hidden /> : <Maximize2 className="h-3 w-3" aria-hidden />}
-            </button>
-          ) : null}
-          <DeleteFileButton file={file} onDeleted={onClose} />
-          {onClose ? (
-            <button
-              className="inline-flex shrink-0 items-center rounded-[8px] border border-line bg-bg px-1.5 py-0.5 text-dim hover:border-err/40 hover:text-err focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-              aria-label={t("branch.removeColumn", { title: cleanTitle(file.title, 60) })}
-              onClick={onClose}
-            >
-              <X className="h-3 w-3" aria-hidden />
-            </button>
-          ) : null}
+            <ProcessStatusControls file={file} compact />
+            {onToggleExpand ? (
+              <button
+                className="inline-flex shrink-0 items-center rounded-[8px] border border-line bg-bg px-1.5 py-0.5 text-dim hover:border-accent/45 hover:text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+                aria-label={expanded ? t("branch.collapseFull") : t("branch.expandFull", { title: cleanTitle(file.title, 60) })}
+                title={expanded ? t("branch.collapseFull") : t("branch.expandFull", { title: cleanTitle(file.title, 60) })}
+                onClick={onToggleExpand}
+              >
+                {expanded ? <Minimize2 className="h-3 w-3" aria-hidden /> : <Maximize2 className="h-3 w-3" aria-hidden />}
+              </button>
+            ) : null}
+            <DeleteFileButton file={file} onDeleted={onClose} />
+            {onClose ? (
+              <button
+                className="inline-flex shrink-0 items-center rounded-[8px] border border-line bg-bg px-1.5 py-0.5 text-dim hover:border-err/40 hover:text-err focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+                aria-label={t("branch.removeColumn", { title: cleanTitle(file.title, 60) })}
+                onClick={onClose}
+              >
+                <X className="h-3 w-3" aria-hidden />
+              </button>
+            ) : null}
+          </div>
+          <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1">
+            <LastActivity file={file} />
+            {/* One identity chip: the model when known (engine lives in the tint
+                and the tooltip), the engine label as fallback. */}
+            {file.model ? (
+              <span
+                className="shrink-0 rounded-full px-1.5 py-0.5 font-mono text-[9.5px] font-semibold"
+                style={{ backgroundColor: effortTint(file).soft, color: effortTint(file).color }}
+                title={[badge.label, effortTitle(file)].filter(Boolean).join(" · ")}
+              >
+                {file.model}
+              </span>
+            ) : (
+              <span className="inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[10px] font-bold" style={badge.style}>
+                {badge.label}
+              </span>
+            )}
+            {file.ctx ? <CtxChip ctx={file.ctx} /> : null}
+            {file.worktree ? (
+              <span
+                className="inline-flex shrink-0 items-center gap-0.5 rounded-full border border-line/80 px-1.5 py-0.5 font-mono text-[9.5px] text-dim"
+                title={t("branch.worktree", { name: file.worktree })}
+              >
+                <GitBranch className="h-2.5 w-2.5" aria-hidden /> {file.worktree}
+              </span>
+            ) : null}
+            {file.plan ? <PlanChip plan={file.plan} /> : null}
+            {file.goal ? <GoalChip goal={file.goal} /> : null}
+            {isRoot ? null : (
+              <span
+                className="inline-flex shrink-0 items-center gap-0.5 text-[10px] text-dim"
+                title={file.handoff ? t("branch.handoffTitle") : t("branch.branchTitle")}
+              >
+                <CornerDownRight className="h-3 w-3" aria-hidden /> {file.handoff ? t("kind.handoff") : kindLabel(t, file.kind)}
+              </span>
+            )}
+          </div>
         </header>
         {banner ?? null}
         {tasks.length ? (
