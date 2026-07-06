@@ -54,12 +54,22 @@ function CodeBlock({ code }: { code: string }) {
   );
 }
 
+function linkHref(raw: string): string {
+  const href = raw.replace(/\\([()])/g, "$1");
+  const local = href.replace(/^file:\/\//, "");
+  if (/^(?:\/|~\/)/.test(local)) {
+    return `#f=${encodeURIComponent(local.replace(/:\d+$/, ""))}`;
+  }
+  return href;
+}
+
 function Anchor({ href, label }: { href: string; label: string }) {
+  const external = /^https?:\/\//.test(href);
   return (
     <a
       href={href}
-      target="_blank"
-      rel="noreferrer"
+      target={external ? "_blank" : undefined}
+      rel={external ? "noreferrer" : undefined}
       title={href}
       className="break-all text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent"
     >
@@ -78,9 +88,7 @@ export function md(text: string): ReactNode {
     if (part.startsWith("**") && part.endsWith("**")) return <b key={i}>{part.slice(2, -2)}</b>;
     const linked = part.match(/^\[([^\]]+)\]\(([^)\s]+)\)$/);
     if (linked) {
-      const href = linked[2].replace(/\\([()])/g, "$1");
-      if (/^https?:\/\//.test(href)) return <Anchor key={i} href={href} label={linked[1]} />;
-      return <InlineCode key={i} text={linked[1]} />;
+      return <Anchor key={i} href={linkHref(linked[2])} label={linked[1]} />;
     }
     if (/^https?:\/\//.test(part)) {
       /* Bare URLs in prose often carry sentence punctuation; keep it as text. */
