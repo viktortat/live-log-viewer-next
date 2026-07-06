@@ -6,6 +6,20 @@ versions follow [SemVer](https://semver.org/) (0.x — the API may still move).
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-07-06
+
+### Fixed
+- CLI no longer kills its own healthy server on startup. The readiness probe
+  reused the 200 ms poll interval as its per-request socket timeout, but the
+  probe hits `/api/files`, which scans every log under `~/.claude` and
+  `~/.codex`; past a few hundred conversations that scan takes 250–600 ms, so
+  every probe aborted early and the launcher declared a timeout after 15 s. The
+  probe now has its own 5 s socket timeout.
+- No more "nothing found" flash while the conversation list loads. The sidebar,
+  switchboard and mobile focus view showed their empty state on first paint,
+  before the first `/api/files` response arrived; they now show a loading
+  spinner until the first fetch settles.
+
 ## [0.8.0] — 2026-07-06
 
 ### Added
