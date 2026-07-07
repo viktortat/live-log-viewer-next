@@ -27,6 +27,30 @@ body {
   color: var(--color-ink);
 }
 
+/* Native <button> ships with `cursor: default`, so every custom control in the
+   app reads as un-clickable until you hover a link. Restore a sane pointer for
+   interactive elements, and switch to not-allowed when they're disabled. These
+   live in the base layer, so any component that opts into a more specific
+   cursor utility (cursor-grab, cursor-text, cursor-zoom-in, cursor-wait,
+   cursor-copy, cursor-crosshair) still wins — utilities beat base. */
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  [role="link"],
+  [role="tab"],
+  summary,
+  label:has(> input[type="checkbox"], > input[type="radio"]),
+  select:not(:disabled) {
+    cursor: pointer;
+  }
+
+  button:disabled,
+  [role="button"][aria-disabled="true"],
+  select:disabled {
+    cursor: not-allowed;
+  }
+}
+
 /* iOS Safari zooms the page when a focused field renders text under 16px.
    Touch screens get 16px fields across the board (overriding the per-field
    text-[...] utilities, hence !important); desktop keeps the compact type. */
