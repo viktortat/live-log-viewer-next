@@ -12,7 +12,7 @@ import type { Workflow } from "@/lib/workflows/types";
 
 import { TaskStrip } from "./BranchPane";
 import { clearDraftStorage, draftSrc, setDraftSrc, setDraftText } from "./DraftAgentPane";
-import { claimedReviewerPaths } from "./flows/flowModel";
+import { foldClaimedReviewers } from "./flows/flowModel";
 import { clearWorkflowDraftStorage } from "./workflows/WorkflowDraftPane";
 import { WorkflowStrip } from "./workflows/WorkflowStrip";
 import { isWorkflowDraftId, workflowsForProject } from "./workflows/workflowModel";
@@ -181,10 +181,7 @@ export function ProjectDashboard({
 
   /* Reviewer transcripts of active flows live inside their round decks:
      they never build their own groups, quiet trees or residual chips. */
-  const groupFiles = useMemo(() => {
-    const claimed = claimedReviewerPaths(flows);
-    return claimed.size ? files.filter((file) => !claimed.has(file.path)) : files;
-  }, [files, flows]);
+  const groupFiles = useMemo(() => foldClaimedReviewers(files, flows), [files, flows]);
   const projectWorkflows = useMemo(() => workflowsForProject(workflows, project, files), [workflows, project, files]);
   const groups = useMemo(() => buildBranchGroups(groupFiles, project), [groupFiles, project]);
   const activeRoots = useMemo(() => new Set(groups.map((group) => group.key)), [groups]);

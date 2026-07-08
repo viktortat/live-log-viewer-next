@@ -88,6 +88,32 @@ export function claimedReviewerPaths(flows: Flow[]): Set<string> {
   return set;
 }
 
+/**
+ * Reviewer sessions are folded into the flow strip (see claimedReviewerPaths),
+ * so they are dropped from the board. But a reviewer often spawns its own
+ * subtasks; with the reviewer gone from the file set those children lose their
+ * on-board parent and `rootOf` promotes each to a detached top-level node. Drop
+ * the reviewer itself and re-home its direct children onto the flow's
+ * implementer — a node that stays visible — so the subtasks render as connected
+ * children of the flow instead of floating loose.
+ */
+export function foldClaimedReviewers(files: FileEntry[], flows: Flow[]): FileEntry[] {
+  const anchorByReviewer = new Map<string, string>();
+  for (const flow of flows) {
+    for (const round of flow.rounds) {
+      if (round.reviewerPath) anchorByReviewer.set(round.reviewerPath, flow.implementerPath);
+    }
+  }
+  if (!anchorByReviewer.size) return files;
+  const out: FileEntry[] = [];
+  for (const file of files) {
+    if (anchorByReviewer.has(file.path)) continue; // the reviewer stays folded in the flow strip
+    const anchor = file.parent ? anchorByReviewer.get(file.parent) : undefined;
+    out.push(anchor ? { ...file, parent: anchor } : file);
+  }
+  return out;
+}
+
 /** A conversation that can host a new flow: a root claude/codex session without one. */
 export function canStartFlow(file: FileEntry, activeByImplementer: ReadonlyMap<string, Flow>): boolean {
   if (activeByImplementer.has(file.path)) return false;
