@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 
 process.env.LLV_STATE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "llv-wf-prov-test-"));
-const { buildWorkflow, normalizeTemplate } = await import("./store");
+const { buildWorkflow, normalizeTemplate, setupStdoutPath, workflowArtifactsDir } = await import("./store");
 const { finishMerge, finishPr, provisionWorktree, prTitle, realExec, runFinish, setupStatus, startSetup } = await import("./provision");
 
 type Workflow = import("./types").Workflow;
@@ -265,4 +265,25 @@ test("integration: a failing setup reports the exit code and stderr tail", async
   expect(status.status).toBe("failed");
   expect(status.detail).toContain("code 3");
   expect(status.detail).toContain("boom");
+});
+
+test("a launched setup with no exit code stays running until the settle window passes, then reads interrupted", () => {
+  const wf = { ...makeWorkflow(SANDBOX), id: "wfsettle-" + process.pid };
+  fs.mkdirSync(workflowArtifactsDir(wf.id), { recursive: true });
+  fs.writeFileSync(setupStdoutPath(wf.id), ""); // the launch artifact, no exit-code file
+  const launchedAt = fs.statSync(setupStdoutPath(wf.id)).mtimeMs;
+  const dead = { ...wf, setupPid: 0x7fffffff }; // an implausible pid — never alive
+
+  try {
+    /* Right after launch a pid that is not yet observable must not be mistaken
+       for an interruption — this is the race the integration polls above hit. */
+    expect(setupStatus(dead, launchedAt + 500).status).toBe("running");
+
+    /* Long after launch with still no exit code, it is a real interruption. */
+    const stale = setupStatus(dead, launchedAt + 60_000);
+    expect(stale.status).toBe("failed");
+    expect(stale.detail).toContain("interrupted");
+  } finally {
+    fs.rmSync(workflowArtifactsDir(wf.id), { recursive: true, force: true });
+  }
 });

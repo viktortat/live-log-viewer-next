@@ -11,7 +11,9 @@ versions follow [SemVer](https://semver.org/) (0.x — the API may still move).
 ### Added
 - Task curator API: `/api/tasks/curator` surfaces recent real user inputs with
   transcript context and accepts short curated proposals that become board
-  tasks with source fingerprints.
+  tasks with source fingerprints. `GET` scopes to every project or one via
+  `?project=`, and returns a `projects` discovery list — so an automation can
+  poke the viewer from anywhere and capture all boards or a single one.
 - Resource cleanup now has a guarded "kill all agents" control for a deliberate
   clean slate across tracked agent panes.
 
@@ -21,6 +23,9 @@ versions follow [SemVer](https://semver.org/) (0.x — the API may still move).
 ### Fixed
 - Finished Codex worktree sessions under `~/.codex/worktrees/<id>/<repo>` keep
   grouping under the parent repo after the ephemeral checkout disappears.
+- Workflow setup no longer reports a just-launched command as "interrupted": a
+  short settle window anchored on the launch artifact absorbs the spawn/exit
+  race between the pid becoming visible and the exit-code trailer landing.
 
 ## [0.11.1] — 2026-07-08
 

@@ -102,6 +102,15 @@ export interface SetupStatus {
   detail: string;
 }
 
+/** Grace after launch during which a setup that is neither exited nor observably
+    alive is read as still starting, not interrupted. Two races live in this
+    window and both widen under load: a fresh pid can sit between spawn and
+    `/proc` visibility, and a just-exited pid can precede its exit-code trailer
+    landing. The launch artifact (setup-stdout.log, created the moment the
+    process starts) anchors the clock — a genuinely interrupted setup, e.g. one
+    seen only after a viewer restart, has a far older artifact and still fails. */
+const SETUP_SETTLE_MS = 3_000;
+
 function readOptional(filePath: string): string {
   try {
     return fs.readFileSync(filePath, "utf8");
@@ -110,9 +119,18 @@ function readOptional(filePath: string): string {
   }
 }
 
+/** Age of a file in ms, or null when it is missing/unreadable. */
+function fileAgeMs(filePath: string, now: number): number | null {
+  try {
+    return now - fs.statSync(filePath).mtimeMs;
+  } catch {
+    return null;
+  }
+}
+
 /** Setup state from the exit-code artifact first, the pid second — the same
-    restart seam headless reviewers use. */
-export function setupStatus(wf: Workflow): SetupStatus {
+    restart seam headless reviewers use. `now` is injectable for the settle test. */
+export function setupStatus(wf: Workflow, now: number = Date.now()): SetupStatus {
   const exitRaw = readOptional(setupExitPath(wf.id)).trim();
   if (exitRaw !== "") {
     if (exitRaw === "0") return { status: "done", detail: "" };
@@ -120,6 +138,11 @@ export function setupStatus(wf: Workflow): SetupStatus {
     return { status: "failed", detail: `setup exited with code ${exitRaw}${stderrTail ? `: ${stderrTail}` : ""}` };
   }
   if (wf.setupPid != null && pidAlive(wf.setupPid)) return { status: "running", detail: "" };
+  /* No exit code and the pid is not observably alive. Right after launch this is
+     a spawn/exit race, not a real interruption — keep reporting "running" until
+     the launch artifact ages past the settle window. */
+  const launchAge = fileAgeMs(setupStdoutPath(wf.id), now);
+  if (launchAge !== null && launchAge < SETUP_SETTLE_MS) return { status: "running", detail: "" };
   return { status: "failed", detail: "setup was interrupted before it finished" };
 }
 
