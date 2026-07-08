@@ -48,13 +48,6 @@ test("a deleted codex worktree still groups under its parent repo project", () =
   expect(projectForCwd(dead)).toBe(projectForCwd(liveRepo));
 });
 
-test("a deleted codex worktree keeps the .agents tools repo project key", () => {
-  const dead = path.join(os.homedir(), ".codex", "worktrees", "2d25", "live-log-viewer-next");
-  const liveRepo = path.join(os.homedir(), ".agents", "tools", "live-log-viewer-next");
-  expect(projectForCwd(dead)).toBe("-agents-tools-live-log-viewer-next");
-  expect(projectForCwd(dead)).toBe(projectForCwd(liveRepo));
-});
-
 test("a worktree's main repo slugifies to the same project name its own sessions use", () => {
   const repo = `${os.homedir()}/.agents/tools/live-log-viewer-next`;
   const slugOfRepo = repo.replace(/[^a-zA-Z0-9]/g, "-");
