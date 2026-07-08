@@ -105,6 +105,29 @@ const LOOP_ARC_BOT = 330;
    reach along it: together they round the two legs into an ellipse-ish ring. */
 const LOOP_BULGE = 56;
 const LOOP_REACH = 52;
+/* Each leg's end offset along the corridor — the arc stops this far short of
+   the node so the arrowhead caps it. */
+const LOOP_HEAD_INSET = 7;
+
+/* End-tangent angle of each leg. A cubic's direction at its end is P3 − P2
+   (endpoint minus its near control point); with fixed control offsets these
+   are constant, so the filled arrowhead can ride the curve's direction instead
+   of always lying flat. Forward descends right into the reviewer; the return
+   climbs left into the implementer. */
+const FWD_HEAD_ANGLE = Math.atan2(LOOP_BULGE, LOOP_REACH - LOOP_HEAD_INSET);
+const BACK_HEAD_ANGLE = Math.atan2(-LOOP_BULGE, LOOP_HEAD_INSET - LOOP_REACH);
+
+/* A filled arrowhead whose tip sits at (x, y) with its body swept back along
+   `angle`, so the triangle aligns with the arc's travel vector. */
+function loopArrowHead(x: number, y: number, angle: number): string {
+  const len = 9;
+  const half = 5;
+  const bx = x - len * Math.cos(angle);
+  const by = y - len * Math.sin(angle);
+  const nx = -Math.sin(angle);
+  const ny = Math.cos(angle);
+  return `M ${bx + half * nx} ${by + half * ny} L ${bx - half * nx} ${by - half * ny} L ${x} ${y} Z`;
+}
 
 /** Hub color of a loop: green while a side works, amber when it waits on the
     user, verdict green once approved, gray otherwise. */
@@ -133,12 +156,12 @@ export const LoopsLayer = memo(function LoopsLayer({ loops, width, height }: { l
         const midY = (yTop + yBot) / 2;
         const forward = `M ${loop.x1} ${yTop} C ${loop.x1 + LOOP_REACH} ${yTop - LOOP_BULGE}, ${loop.x2 - LOOP_REACH} ${
           yTop - LOOP_BULGE
-        }, ${loop.x2 - 7} ${yTop}`;
+        }, ${loop.x2 - LOOP_HEAD_INSET} ${yTop}`;
         const back = `M ${loop.x2} ${yBot} C ${loop.x2 - LOOP_REACH} ${yBot + LOOP_BULGE}, ${loop.x1 + LOOP_REACH} ${
           yBot + LOOP_BULGE
-        }, ${loop.x1 + 7} ${yBot}`;
-        const forwardHead = `M ${loop.x2 - 9} ${yTop - 5} L ${loop.x2 - 9} ${yTop + 5} L ${loop.x2 - 1} ${yTop} Z`;
-        const backHead = `M ${loop.x1 + 9} ${yBot - 5} L ${loop.x1 + 9} ${yBot + 5} L ${loop.x1 + 1} ${yBot} Z`;
+        }, ${loop.x1 + LOOP_HEAD_INSET} ${yBot}`;
+        const forwardHead = loopArrowHead(loop.x2 - LOOP_HEAD_INSET, yTop, FWD_HEAD_ANGLE);
+        const backHead = loopArrowHead(loop.x1 + LOOP_HEAD_INSET, yBot, BACK_HEAD_ANGLE);
         const arc = (d: string, live: boolean) => ({
           d,
           fill: "none" as const,

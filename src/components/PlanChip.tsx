@@ -59,17 +59,31 @@ function ctxTone(pct: number): string {
   return "bg-chip text-dim";
 }
 
-/** Context-window fullness of an agent: «ctx N%», exact token counts in the
+/* Token counts shortened for the chip face: 176_000 → «176K», 1_000_000 → «1M»,
+   1_200_000 → «1.2M». The exact figures stay in the tooltip. */
+function fmtTokens(n: number): string {
+  if (n >= 1_000_000) {
+    const m = n / 1_000_000;
+    return `${Number.isInteger(m) || m >= 10 ? Math.round(m) : Math.round(m * 10) / 10}M`;
+  }
+  if (n >= 1000) return `${Math.round(n / 1000)}K`;
+  return `${n}`;
+}
+
+/** Context-window fullness of an agent: «ctx 176K / 200K» (used of window),
+    the percentage still drives the tone and the exact token counts live in the
     tooltip. Rendered wherever the agent is shown (pane header, switch cards). */
 export function CtxChip({ ctx }: { ctx: CtxUsage }) {
   const { t } = useLocale();
   return (
     <span
-      className={`inline-flex shrink-0 items-center rounded-full px-1.5 py-0.5 font-mono text-[9.5px] font-semibold ${ctxTone(ctx.pct)}`}
+      className={`inline-flex shrink-0 items-center gap-0.5 rounded-full px-1.5 py-0.5 font-mono text-[9.5px] font-semibold ${ctxTone(ctx.pct)}`}
       title={t("plan.ctxTitle", { pct: ctx.pct, used: ctx.usedTokens.toLocaleString(bcp47()), window: ctx.windowTokens.toLocaleString(bcp47()) })}
       aria-label={t("plan.ctxAria", { pct: ctx.pct })}
     >
-      ctx {ctx.pct}%
+      ctx {fmtTokens(ctx.usedTokens)}
+      <span className="opacity-50">/</span>
+      {fmtTokens(ctx.windowTokens)}
     </span>
   );
 }
