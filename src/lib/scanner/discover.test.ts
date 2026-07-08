@@ -81,3 +81,39 @@ test("discoverFiles preserves scanner filters, mtime ordering, and the cap", asy
     await rm(base, { recursive: true, force: true });
   }
 });
+
+test("discoverFiles keeps native Codex spawn parents outside the recent cap", async () => {
+  const base = await mkdtemp(path.join(os.tmpdir(), "llv-discover-parent-"));
+  try {
+    const roots: Record<RootKey, string> = {
+      "codex-sessions": path.join(base, "codex-sessions"),
+      "claude-projects": path.join(base, "claude-projects"),
+      "claude-tasks": path.join(base, "claude-tasks"),
+    };
+    await Promise.all(Object.values(roots).map((root) => mkdir(root, { recursive: true })));
+
+    const parentId = "019f421e-02e1-73e0-9b77-bebde063f10a";
+    const childId = "019f423a-d6e9-7903-b597-3e676b6ff3d4";
+    const startedAt = 1_700_010_000;
+    const parentPath = path.join(roots["codex-sessions"], "2026", "07", "08", `rollout-parent-${parentId}.jsonl`);
+    const childPath = path.join(roots["codex-sessions"], "2026", "07", "08", `rollout-child-${childId}.jsonl`);
+    await writeFixture(parentPath, JSON.stringify({ type: "session_meta", payload: { id: parentId, cwd: "/repo" } }) + "\n", startedAt - 10);
+    await writeFixture(
+      childPath,
+      JSON.stringify({ type: "session_meta", payload: { id: childId, parent_thread_id: parentId, cwd: "/repo" } }) + "\n",
+      startedAt + FILE_CAP + 10,
+    );
+    for (let index = 0; index < FILE_CAP - 1; index += 1) {
+      const pathname = path.join(roots["codex-sessions"], `filler-${String(index).padStart(3, "0")}.jsonl`);
+      await writeFixture(pathname, JSON.stringify({ type: "session_meta", payload: { cwd: "/repo" } }) + "\n", startedAt + index);
+    }
+
+    const entries = await discoverFiles(roots);
+
+    expect(entries).toHaveLength(FILE_CAP + 1);
+    expect(entries[0]?.path).toBe(childPath);
+    expect(entries.some((entry) => entry.path === parentPath)).toBe(true);
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});

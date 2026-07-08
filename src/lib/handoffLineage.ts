@@ -10,15 +10,15 @@ import { pidAlive } from "@/lib/scanner/process";
  * land in the source's tree — linked and placed next to it — instead of
  * standing as an unrelated root. The transcript of the new agent does not
  * exist yet at spawn time, so the fact is recorded in two steps: the spawn
- * remembers «tmux pane pid → source transcript», and the scanner later matches
- * a new conversation to that pane through its /proc ancestry. The proven
- * child link is then persisted by path (like codex lineage), so it survives
- * both the process exit and a server restart.
+ * remembers «tmux pane pid → source transcript», and callers that know the
+ * child path record «child transcript → source transcript» immediately. The
+ * pane-pid path remains as a fallback for engines whose transcript path appears
+ * only after boot.
  */
 const LINEAGE_FILE = statePath("handoff-lineage.json");
-const MAX_CHILDREN = 2000;
+const MAX_CHILDREN = 20_000;
 
-interface StoreShape {
+export interface HandoffLineageStoreShape {
   panes?: Record<string, string>;
   children?: Record<string, string>;
 }
@@ -29,28 +29,36 @@ let panes: Map<number, string> | null = null;
 let children: Map<string, string> | null = null;
 let dirty = false;
 
-function load(): { panes: Map<number, string>; children: Map<string, string> } {
-  if (panes && children) return { panes, children };
-  panes = new Map();
-  children = new Map();
-  let stored: StoreShape = {};
-  try {
-    stored = JSON.parse(fs.readFileSync(LINEAGE_FILE, "utf8")) as StoreShape;
-  } catch {
-    /* first run or unreadable cache: start empty */
-  }
+export function normalizeHandoffLineageStore(
+  stored: HandoffLineageStoreShape,
+  pidIsAlive: (pid: number) => boolean = pidAlive,
+): { panes: Map<number, string>; children: Map<string, string>; dirty: boolean } {
+  const nextPanes = new Map<number, string>();
+  const nextChildren = new Map<string, string>();
   for (const [pidRaw, parent] of Object.entries(stored.panes ?? {})) {
     const pid = Number(pidRaw);
     /* A dead pane pid can only match again after the OS reuses it — drop it. */
-    if (Number.isInteger(pid) && pid > 0 && typeof parent === "string" && pidAlive(pid)) panes.set(pid, parent);
+    if (Number.isInteger(pid) && pid > 0 && typeof parent === "string" && pidIsAlive(pid)) nextPanes.set(pid, parent);
   }
   for (const [child, parent] of Object.entries(stored.children ?? {})) {
-    /* A child link earns its bytes only while the child transcript exists, so
-       the store shrinks with the sessions directories instead of growing. */
-    if (typeof parent === "string" && fs.existsSync(child)) children.set(child, parent);
+    if (typeof parent === "string") nextChildren.set(child, parent);
   }
   const storedSize = Object.keys(stored.panes ?? {}).length + Object.keys(stored.children ?? {}).length;
-  if (panes.size + children.size !== storedSize) dirty = true;
+  return { panes: nextPanes, children: nextChildren, dirty: nextPanes.size + nextChildren.size !== storedSize };
+}
+
+function load(): { panes: Map<number, string>; children: Map<string, string> } {
+  if (panes && children) return { panes, children };
+  let stored: HandoffLineageStoreShape = {};
+  try {
+    stored = JSON.parse(fs.readFileSync(LINEAGE_FILE, "utf8")) as HandoffLineageStoreShape;
+  } catch {
+    /* first run or unreadable cache: start empty */
+  }
+  const normalized = normalizeHandoffLineageStore(stored);
+  panes = normalized.panes;
+  children = normalized.children;
+  if (normalized.dirty) dirty = true;
   return { panes, children };
 }
 

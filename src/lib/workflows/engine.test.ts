@@ -52,6 +52,13 @@ function entryFor(pathname: string, engine: "claude" | "codex", mtime: number): 
   };
 }
 
+function writeCodexEntry(name: string, payload: Record<string, unknown>, mtime: number): FileEntry {
+  const pathname = path.join(process.env.LLV_STATE_DIR!, "codex-fixtures", name);
+  fs.mkdirSync(path.dirname(pathname), { recursive: true });
+  fs.writeFileSync(pathname, JSON.stringify({ type: "session_meta", payload }) + "\n");
+  return { ...entryFor(pathname, "codex", mtime), size: fs.statSync(pathname).size };
+}
+
 /**
  * A scripted harness: every port is observable and answers from mutable
  * state, so tests walk the machine tick by tick without tmux, git or flows.
@@ -308,6 +315,35 @@ test("a stage agent pane dying before STAGE_DONE parks the workflow", async () =
   const cur = load(wf.id);
   expect(cur.state).toBe("needs_decision");
   expect(cur.stateDetail).toContain("died");
+});
+
+test("workflow fallback claim skips a newer native Codex subagent", async () => {
+  const harness = makeHarness();
+  const wf = createWf(harness.ports);
+  await tickWorkflows([], harness.ports);
+  await tickWorkflows([], harness.ports);
+  let cur = load(wf.id);
+  const started = Date.parse(cur.stageRuns[0]!.startedAt!) / 1000;
+  const rootId = "019f421e-02e1-73e0-9b77-bebde063f10a";
+  const childId = "019f423a-d6e9-7903-b597-3e676b6ff3d4";
+  const root = writeCodexEntry(`rollout-root-${rootId}.jsonl`, { id: rootId, cwd: cur.worktreeDir }, started + 5);
+  const nativeChild = writeCodexEntry(
+    `rollout-child-${childId}.jsonl`,
+    {
+      id: childId,
+      parent_thread_id: rootId,
+      cwd: cur.worktreeDir,
+      source: { subagent: { thread_spawn: { parent_thread_id: rootId } } },
+    },
+    started + 10,
+  );
+  harness.state.cwds.set(root.path, cur.worktreeDir);
+  harness.state.cwds.set(nativeChild.path, cur.worktreeDir);
+
+  await tickWorkflows([nativeChild, root], harness.ports);
+  cur = load(wf.id);
+
+  expect(cur.stageRuns[0]!.agentPath).toBe(root.path);
 });
 
 test("a spawn interrupted by a restart parks instead of double-spawning", async () => {

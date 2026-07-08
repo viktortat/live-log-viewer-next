@@ -3,6 +3,7 @@ import { access, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 
 import type { FileEntry, RootKey } from "../types";
+import { codexThreadIdFromPath, nativeCodexParentThreadId } from "./codexNative";
 import { describe } from "./describe";
 import { EXTS, FILE_CAP, ROOTS } from "./roots";
 
@@ -93,10 +94,28 @@ export async function discoverFiles(roots: Roots = ROOTS): Promise<FileEntry[]> 
     if (!(await rootExists(root, limit))) return [];
     return walk(rootName, roots, root, root, limit);
   }))).flat();
-  // describe() reads file heads, so it runs only on the capped shortlist; the
-  // walk stays a cheap stat pass over every candidate.
+  // describe() reads file heads, so it runs only on the capped shortlist plus
+  // parent closure; the walk stays a cheap stat pass over every candidate.
   raw.sort((a, b) => b.st.mtimeMs - a.st.mtimeMs);
-  return raw.slice(0, FILE_CAP).map((entry) => {
+  const rawByCodexThread = new Map<string, RawEntry>();
+  for (const entry of raw) {
+    if (entry.rootName !== "codex-sessions" || !entry.path.endsWith(".jsonl")) continue;
+    const threadId = codexThreadIdFromPath(entry.path);
+    if (threadId) rawByCodexThread.set(threadId, entry);
+  }
+  const selected = raw.slice(0, FILE_CAP);
+  const selectedPaths = new Set(selected.map((entry) => entry.path));
+  for (let index = 0; index < selected.length; index += 1) {
+    const entry = selected[index]!;
+    if (entry.rootName !== "codex-sessions" || !entry.path.endsWith(".jsonl")) continue;
+    const parentThreadId = nativeCodexParentThreadId(entry.path, entry.st.size);
+    const parent = parentThreadId ? rawByCodexThread.get(parentThreadId) : undefined;
+    if (parent && !selectedPaths.has(parent.path)) {
+      selectedPaths.add(parent.path);
+      selected.push(parent);
+    }
+  }
+  return selected.map((entry) => {
     const meta = describe(entry.rootName, entry.root, entry.path, entry.st);
     return {
       path: entry.path,

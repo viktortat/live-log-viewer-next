@@ -187,7 +187,7 @@ export function ComposerBar({
               setSendMenuOpen((open) => !open);
             }}
           >
-            <Hint label={dictationRecording ? (sendTitleRecording ?? sendLabelRecording) : sendLabelIdle}>
+            <Hint label={dictationRecording ? (sendTitleRecording ?? sendLabelRecording) : sendLabelIdle} align="right">
               <button
                 type={dictationRecording ? "button" : "submit"}
                 onClick={

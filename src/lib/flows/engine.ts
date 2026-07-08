@@ -2,7 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { freshSpecFor, resumeSpecFor } from "@/lib/agent/cli";
+import { resolveSpawnedTranscriptPath } from "@/lib/agent/spawnedTranscript";
 import { headCwd } from "@/lib/agent/transcript";
+import { isNativeCodexSubagentTranscript } from "@/lib/scanner/codexNative";
 import { resolveTarget, sendText, sendToResumedAgent, spawnAgentWithPrompt } from "@/lib/tmux";
 import type { FileEntry } from "@/lib/types";
 
@@ -126,12 +128,23 @@ function maybeClaimReviewerPathBySession(entries: FileEntry[], round: Round, ses
   return true;
 }
 
+function isNativeCodexSubagentEntry(entry: FileEntry): boolean {
+  return entry.root === "codex-sessions" && entry.path.endsWith(".jsonl") && isNativeCodexSubagentTranscript(entry.path, entry.size);
+}
+
 function maybeClaimReviewerPathByHeuristic(flow: Flow, entries: FileEntry[], round: Round): boolean {
   if (round.reviewerPath) return false;
   const started = unixMs(round.startedAt) / 1000 - 5;
   const engine = flow.roles.reviewer.engine;
   const candidates = entries
-    .filter((entry) => entry.engine === engine && entry.path !== flow.implementerPath && entry.mtime >= started && headCwd(entry.path) === flow.cwd)
+    .filter(
+      (entry) =>
+        entry.engine === engine &&
+        entry.path !== flow.implementerPath &&
+        entry.mtime >= started &&
+        !isNativeCodexSubagentEntry(entry) &&
+        headCwd(entry.path) === flow.cwd,
+    )
     .sort((a, b) => b.mtime - a.mtime);
   const hit = candidates[0];
   if (!hit) return false;
@@ -164,11 +177,19 @@ async function launchReviewer(flow: Flow, round: Round): Promise<void> {
       effort: flow.roles.reviewer.effort,
       readOnly: true,
     });
+    const startedAtMs = Date.now();
     const pane = await spawnAgentWithPrompt(spec, prompt);
     /* The pane handle makes cancel-round reliable even while the reviewer's
        transcript is still unattributed (codex, or an early stop click). */
     round.reviewerPane = { paneId: pane.paneId, windowName: spec.windowName };
-    if (spec.transcript) round.reviewerPath = spec.transcript;
+    const transcript = await resolveSpawnedTranscriptPath({
+      engine: flow.roles.reviewer.engine,
+      knownTranscript: spec.transcript ?? null,
+      panePid: pane.panePid ?? null,
+      cwd: flow.cwd,
+      startedAtMs,
+    });
+    if (transcript) round.reviewerPath = transcript;
     if (!round.reviewerPath && pane.panePid) round.error = null;
     return;
   }

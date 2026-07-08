@@ -12,6 +12,7 @@ import {
 } from "../handoffLineage";
 import type { FileEntry } from "../types";
 import { globalCache } from "./caches";
+import { codexThreadIdFromPath, nativeCodexParentThreadId } from "./codexNative";
 import { taskParts } from "./discover";
 import { readJson, recordValue, recordsValue, stringValue } from "./json";
 import { fileHasNeedle, findNeedle } from "./needle";
@@ -244,15 +245,12 @@ function bgCommand(tid: string, transcripts: (string | null)[], fallbackTranscri
 const ANCESTRY_MAX_DEPTH = 15;
 
 /**
- * Spawn parentage of a codex rollout is a permanent fact, but it can only be
- * proven from /proc while the process is alive. Once the process exits its pid
- * is gone and the ancestry walk finds nothing, so the rollout would fall back
- * to a top-level orphan and visually detach from the thread that started it.
- * The link observed while live is remembered — in-process for the session and
- * on disk so it also survives a server restart.
+ * Spawn parentage of a codex rollout is a permanent fact. Live /proc ancestry
+ * can prove native spawns while both processes still exist; each proven edge is
+ * kept in memory and on disk so later scans reuse it.
  */
 const LINEAGE_FILE = statePath("codex-lineage.json");
-const LINEAGE_MAX_ENTRIES = 2000;
+const LINEAGE_MAX_ENTRIES = 20_000;
 const lineageCache = globalCache<string>("codex-lineage");
 let lineageLoaded = false;
 let lineageDirty = false;
@@ -263,10 +261,7 @@ function loadLineage(): void {
   const data = readJson(LINEAGE_FILE);
   if (data && typeof data === "object" && !Array.isArray(data)) {
     for (const [child, parent] of Object.entries(data)) {
-      /* A lineage entry earns its bytes only while the rollout file exists,
-         so the store shrinks with the sessions directory instead of growing
-         forever. */
-      if (typeof parent === "string" && !lineageCache.has(child) && fs.existsSync(child)) {
+      if (typeof parent === "string" && !lineageCache.has(child)) {
         lineageCache.set(child, parent);
       }
     }
@@ -298,20 +293,41 @@ function persistLineage(): void {
   }
 }
 
+function attachNativeCodexSubagentParents(entries: FileEntry[]): void {
+  loadLineage();
+  const pathByThreadId = new Map<string, string>();
+  for (const entry of entries) {
+    if (entry.root !== "codex-sessions" || !entry.path.endsWith(".jsonl")) continue;
+    const id = codexThreadIdFromPath(entry.path);
+    if (id) pathByThreadId.set(id, entry.path);
+  }
+  for (const entry of entries) {
+    if (entry.root !== "codex-sessions" || entry.parent) continue;
+    const parentThreadId = nativeCodexParentThreadId(entry.path, entry.size);
+    const parent = parentThreadId ? (pathByThreadId.get(parentThreadId) ?? null) : null;
+    if (parent && parent !== entry.path) {
+      entry.parent = parent;
+      rememberLineage(entry.path, parent);
+    }
+  }
+  persistLineage();
+}
+
 /**
  * Live rollouts without a recorded parent still prove their spawner through
- * /proc. A pid already attributed to a Claude transcript among the rollout's
- * ancestors is the spawner: the nearest Claude ancestor owns the codex it
- * launched. This is a spawn-lineage fact; no mtime or project heuristics
- * participate.
+ * /proc. A pid already attributed to a transcript among the rollout's ancestors
+ * is the spawner: the nearest Claude or Codex ancestor owns the child rollout.
+ * This is a spawn-lineage fact; no mtime or project heuristics participate.
  */
 function attachLiveCodexParents(entries: FileEntry[]): void {
   loadLineage();
   const orphans = entries.filter((entry) => entry.root === "codex-sessions" && !entry.parent);
   if (orphans.length === 0) return;
-  const claudeByPid = new Map<number, string>();
+  const ownerByPid = new Map<number, string>();
   for (const entry of entries) {
-    if (entry.root === "claude-projects" && entry.pid !== null) claudeByPid.set(entry.pid, entry.path);
+    if ((entry.root === "claude-projects" || entry.root === "codex-sessions") && entry.pid !== null) {
+      ownerByPid.set(entry.pid, entry.path);
+    }
   }
   for (const rollout of orphans) {
     let resolved: string | null = null;
@@ -319,8 +335,8 @@ function attachLiveCodexParents(entries: FileEntry[]): void {
     for (let pid: number | null = rollout.pid; pid !== null && !seen.has(pid); pid = readPpid(pid)) {
       seen.add(pid);
       if (seen.size > ANCESTRY_MAX_DEPTH) break;
-      const owner = claudeByPid.get(pid);
-      if (owner) {
+      const owner = ownerByPid.get(pid);
+      if (owner && owner !== rollout.path) {
         resolved = owner;
         break;
       }
@@ -411,6 +427,7 @@ export async function linkEntries(entries: FileEntry[]): Promise<void> {
       }
     }
   }
+  attachNativeCodexSubagentParents(entries);
   attachLiveCodexParents(entries);
   attachHandoffParents(entries);
   chainCompactedSessions(entries);

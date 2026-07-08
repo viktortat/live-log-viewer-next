@@ -11,6 +11,7 @@ import type { FileEntry } from "@/lib/types";
 
 import { registerLinkTarget } from "./AgentLink";
 import { DeleteFileButton } from "./DeleteFileButton";
+import { EffortPills } from "./EffortPills";
 import { FlipRow } from "./FlipRow";
 import { LogFeed } from "./LogFeed";
 import { paneState, type PaneState } from "./paneState";
@@ -197,6 +198,7 @@ export function BranchPane({ file, tasks, isRoot, onClose, dragHandle, noCompose
                 {badge.label}
               </span>
             )}
+            <EffortPills file={file} />
             {/* The phone header keeps only actionable or alarming chips: ctx
                 appears once it nears the limit, the worktree name and the
                 branch-kind label yield their room to the rest of the row. */}

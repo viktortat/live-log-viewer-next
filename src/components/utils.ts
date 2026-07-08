@@ -116,6 +116,26 @@ export function effortTitle(file: FileEntry): string | undefined {
   return file.effort ? translate(getLocale(), "util.effortTitle", { effort: file.effort }) : undefined;
 }
 
+/* Both CLI scales share this order, minimal through max, so the six-slot meter reads
+   the same regardless of engine. */
+const EFFORT_LEVELS: Record<string, number> = {
+  minimal: 1,
+  low: 2,
+  medium: 3,
+  high: 4,
+  xhigh: 5,
+  max: 6,
+};
+
+/** Reasoning tier of an entry as a 1-6 meter level. Callers hide the indicator
+    entirely on 0. */
+export function effortLevel(file: FileEntry): number {
+  return EFFORT_LEVELS[file.effort ?? ""] ?? 0;
+}
+
+/** The full meter height, so pill renderers agree on how many slots to draw. */
+export const EFFORT_LEVEL_MAX = 6;
+
 /** Engine base tint for UI that has no FileEntry yet (e.g. the spawn dialog). */
 export function engineTintOf(engine: string): ModelTint {
   return ENGINE_TINTS[engine] ?? NEUTRAL_TINT;

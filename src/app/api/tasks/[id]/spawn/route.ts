@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { freshSpecFor, type AgentEngine } from "@/lib/agent/cli";
 import { reasoningFromBody } from "@/lib/agent/efforts";
+import { resolveSpawnedTranscriptPath } from "@/lib/agent/spawnedTranscript";
 import { rejectCrossOrigin } from "@/lib/sameOrigin";
 import { applyAssignmentPatches, type AssignmentPatch } from "@/lib/tasks/commands";
 import { isoNow } from "@/lib/tasks/helpers";
@@ -68,11 +69,19 @@ export async function POST(req: NextRequest, ctx: TaskRouteContext): Promise<Nex
 
   try {
     const spec = freshSpecFor(engine, cwdResult.cwd, { effort: reasoning.effort, fast: reasoning.fast });
+    const startedAtMs = Date.now();
     const pane = await spawnAgentWithPrompt(spec, task.text);
+    const transcript = await resolveSpawnedTranscriptPath({
+      engine,
+      knownTranscript: spec.transcript ?? null,
+      panePid: pane.panePid ?? null,
+      cwd: cwdResult.cwd,
+      startedAtMs,
+    });
     const at = isoNow();
     let patch: AssignmentPatch;
-    if (spec.transcript) {
-      patch = { path: spec.transcript, panePid: pane.panePid ?? null, state: "delivered", error: null, at };
+    if (transcript) {
+      patch = { path: transcript, panePid: pane.panePid ?? null, state: "delivered", error: null, at };
     } else if (pane.panePid) {
       patch = { path: null, panePid: pane.panePid, state: "spawning", error: null, at };
     } else {

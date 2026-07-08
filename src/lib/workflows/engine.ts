@@ -3,12 +3,14 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { freshSpecFor } from "@/lib/agent/cli";
+import { resolveSpawnedTranscriptPath } from "@/lib/agent/spawnedTranscript";
 import { headCwd } from "@/lib/agent/transcript";
 import { closeFlow, createFlowFromRequest, patchFlow as patchReviewFlow } from "@/lib/flows/commands";
 import { lastAssistantMessage } from "@/lib/flows/findings";
 import { loadFlows } from "@/lib/flows/store";
 import type { CreateFlowRequest, Flow, RoleConfig } from "@/lib/flows/types";
 import { persistHandoffLineage, rememberHandoffChild } from "@/lib/handoffLineage";
+import { isNativeCodexSubagentTranscript } from "@/lib/scanner/codexNative";
 import { projectForCwd } from "@/lib/scanner/describe";
 import { isShellCommand } from "@/lib/status";
 import { paneInfo, spawnAgentWithPrompt } from "@/lib/tmux";
@@ -73,8 +75,16 @@ export function defaultPorts(): WorkflowPorts {
     setupStatus,
     spawnAgent: async (role, cwd, prompt) => {
       const spec = freshSpecFor(role.engine, cwd, { model: role.model, effort: role.effort });
+      const startedAtMs = Date.now();
       const pane = await spawnAgentWithPrompt(spec, prompt);
-      return { paneId: pane.paneId, transcript: spec.transcript ?? null, panePid: pane.panePid ?? null };
+      const transcript = await resolveSpawnedTranscriptPath({
+        engine: role.engine,
+        knownTranscript: spec.transcript ?? null,
+        panePid: pane.panePid ?? null,
+        cwd,
+        startedAtMs,
+      });
+      return { paneId: pane.paneId, transcript, panePid: pane.panePid ?? null };
     },
     paneAgentAlive: async (paneId) => {
       const info = await paneInfo(paneId);
@@ -149,6 +159,10 @@ function claimedPaths(wf: Workflow): Set<string> {
   return set;
 }
 
+function isNativeCodexSubagentEntry(entry: FileEntry): boolean {
+  return entry.root === "codex-sessions" && entry.path.endsWith(".jsonl") && isNativeCodexSubagentTranscript(entry.path, entry.size);
+}
+
 /**
  * Claims the freshest unowned conversation of the right engine born in the
  * worktree after the spawn — the same heuristic flows use for codex
@@ -165,6 +179,7 @@ function claimTranscript(wf: Workflow, run: WorkflowStageRun, role: RoleConfig, 
         !entry.path.includes(path.sep + "subagents" + path.sep) &&
         entry.mtime >= started &&
         !taken.has(entry.path) &&
+        !isNativeCodexSubagentEntry(entry) &&
         ports.headCwd(entry.path) === wf.worktreeDir,
     )
     .sort((a, b) => b.mtime - a.mtime)[0];

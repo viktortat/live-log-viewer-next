@@ -12,9 +12,13 @@ const distStandaloneDir = join(distDir, "standalone");
 
 function runNextBuild() {
   return new Promise((resolve, reject) => {
+    const env = { ...process.env, LLV_STANDALONE: "1" };
+    for (const key of Object.keys(env)) {
+      if (key.startsWith("__NEXT_PRIVATE_")) delete env[key];
+    }
     const child = spawn(nextBin, ["build", "--webpack"], {
       cwd: root,
-      env: { ...process.env, LLV_STANDALONE: "1" },
+      env,
       stdio: "inherit",
     });
 

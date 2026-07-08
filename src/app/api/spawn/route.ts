@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { freshSpecFor, type AgentEngine } from "@/lib/agent/cli";
 import { reasoningFromBody } from "@/lib/agent/efforts";
+import { resolveSpawnedTranscriptPath } from "@/lib/agent/spawnedTranscript";
 import { headCwd } from "@/lib/agent/transcript";
 import { persistHandoffLineage, rememberHandoffChild, rememberHandoffPane } from "@/lib/handoffLineage";
 import { rejectCrossOrigin } from "@/lib/sameOrigin";
@@ -118,11 +119,16 @@ export async function GET(req: NextRequest): Promise<NextResponse<SuggestRespons
   return NextResponse.json({ dirs, cwd: srcCwd });
 }
 
+function parentFromBody(body: { src?: unknown; parent?: unknown }): string {
+  if (typeof body.parent === "string") return body.parent;
+  return typeof body.src === "string" ? body.src : "";
+}
+
 export async function POST(req: NextRequest): Promise<NextResponse<SpawnResponse | ApiError>> {
   const rejection = rejectCrossOrigin(req);
   if (rejection) return rejection;
 
-  let body: { engine?: unknown; cwd?: unknown; prompt?: unknown; images?: unknown; src?: unknown; effort?: unknown; fast?: unknown };
+  let body: { engine?: unknown; cwd?: unknown; prompt?: unknown; images?: unknown; src?: unknown; parent?: unknown; effort?: unknown; fast?: unknown };
   try {
     body = (await req.json()) as typeof body;
   } catch {
@@ -163,18 +169,22 @@ export async function POST(req: NextRequest): Promise<NextResponse<SpawnResponse
     const bundle = buildImagePayload(prompt, images);
     imagePaths = bundle.imagePaths;
     const spec = freshSpecFor(engine, cwd, { effort: reasoning.effort, fast: reasoning.fast });
+    const startedAtMs = Date.now();
     const pane = await spawnAgentWithPrompt(spec, bundle.payload);
-    /* Handoff spawn: remember which conversation the new agent descends from,
-       so the scanner links its transcript into the source's tree. A claude
-       spec knows its transcript path up front; a codex rollout is matched
-       later through the pane pid in its /proc ancestry. */
-    const src = typeof body.src === "string" ? body.src : "";
+    const childPath = await resolveSpawnedTranscriptPath({
+      engine,
+      knownTranscript: spec.transcript ?? null,
+      panePid: pane.panePid ?? null,
+      cwd,
+      startedAtMs,
+    });
+    const src = parentFromBody(body);
     if (src && transcriptAllowed(src)) {
-      if (spec.transcript) rememberHandoffChild(spec.transcript, src);
+      if (childPath) rememberHandoffChild(childPath, src);
       if (pane.panePid) rememberHandoffPane(pane.panePid, src);
       persistHandoffLineage();
     }
-    return NextResponse.json({ ok: true, target: pane.display, path: spec.transcript ?? null });
+    return NextResponse.json({ ok: true, target: pane.display, path: childPath });
   } catch (error) {
     deleteInboxImages(imagePaths);
     return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
